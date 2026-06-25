@@ -203,7 +203,7 @@ var _ = Describe("DeviceLease controller", func() {
 
 		// Heartbeat a few times across the original TTL window (merge-patch so it
 		// doesn't race the controller's own status updates).
-		for i := 0; i < 4; i++ {
+		for range 4 {
 			time.Sleep(time.Second)
 			base := getLease("hb")
 			patched := base.DeepCopy()

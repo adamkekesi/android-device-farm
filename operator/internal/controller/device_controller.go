@@ -53,6 +53,8 @@ const (
 	// socatImage is the TCP-forwarder sidecar image.
 	socatImage = "alpine/socat:latest"
 
+	// crashLoopBackOff is the kubelet waiting reason for a crash-looping container.
+	crashLoopBackOff = "CrashLoopBackOff"
 	// crashLoopRestartThreshold marks a device Failed once its container has
 	// restarted this many times.
 	crashLoopRestartThreshold int32 = 3
@@ -61,9 +63,9 @@ const (
 	recreateBackoffMax  = 5 * time.Minute
 
 	// Recovery bookkeeping annotations.
-	annBooted    = "farm.example.com/booted"          // device has been Ready at least once
+	annBooted    = "farm.example.com/booted"            // device has been Ready at least once
 	annFailures  = "farm.example.com/recreate-attempts" // consecutive recreate count (backoff)
-	annNextRetry = "farm.example.com/next-retry"       // earliest next recreate time (RFC3339)
+	annNextRetry = "farm.example.com/next-retry"        // earliest next recreate time (RFC3339)
 )
 
 // DeviceReconciler reconciles a Device object: it backs each Device with an
@@ -434,7 +436,7 @@ func defaultBootCompletedProbe() *corev1.Probe {
 // Device phase. A pod that is unready after having booted is treated as wedged.
 func computePhase(pod *corev1.Pod, booted bool) (farmv1alpha1.DevicePhase, string, string) {
 	if reason := crashLoopReason(pod); reason != "" {
-		return farmv1alpha1.DeviceFailed, "CrashLoopBackOff", reason
+		return farmv1alpha1.DeviceFailed, crashLoopBackOff, reason
 	}
 	switch pod.Status.Phase {
 	case corev1.PodFailed:
@@ -462,7 +464,7 @@ func podReady(pod *corev1.Pod) bool {
 
 func crashLoopReason(pod *corev1.Pod) string {
 	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason == crashLoopBackOff {
 			return fmt.Sprintf("container %s is crash-looping", cs.Name)
 		}
 		if cs.RestartCount >= crashLoopRestartThreshold {

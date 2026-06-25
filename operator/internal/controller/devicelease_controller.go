@@ -182,7 +182,7 @@ func (r *DeviceLeaseReconciler) deviceHealth(ctx context.Context, lease *farmv1a
 	}
 	var dev farmv1alpha1.Device
 	if err := r.Get(ctx, client.ObjectKey{Name: lease.Status.DeviceRef, Namespace: lease.Namespace}, &dev); err != nil {
-		return false, "DeviceMissing", "bound device "+lease.Status.DeviceRef+" not found"
+		return false, "DeviceMissing", "bound device " + lease.Status.DeviceRef + " not found"
 	}
 	if dev.Status.Phase == farmv1alpha1.DeviceFailed {
 		return false, "DeviceFailed", "bound device is failed and being recovered"

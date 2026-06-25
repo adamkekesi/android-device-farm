@@ -23,12 +23,9 @@ linters:
     - unconvert
     - unparam
     - unused
-    - logcheck
   settings:
-    custom:
-      logcheck:
-        type: "module"
-        description: Checks Go logging calls for Kubernetes logging conventions.
+    goconst:
+      ignore-string-values: "true|false|adb"
     depguard:
       rules:
         forbid-sort-pkg:
@@ -53,6 +50,9 @@ linters:
           - dupl
           - lll
         path: internal/*
+      - linters:
+          - goconst
+        path: _test\.go
     paths:
       - third_party$
       - builtin$
