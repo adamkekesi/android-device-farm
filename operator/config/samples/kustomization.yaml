@@ -1,0 +1,7 @@
+## Append samples of your project ##
+resources:
+- farm_v1alpha1_deviceclass.yaml
+- farm_v1alpha1_devicepool.yaml
+- farm_v1alpha1_device.yaml
+- farm_v1alpha1_devicelease.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

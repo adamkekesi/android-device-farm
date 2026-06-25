@@ -1,0 +1,12 @@
+apiVersion: farm.example.com/v1alpha1
+kind: DeviceLease
+metadata:
+  labels:
+    app.kubernetes.io/name: devicefarm
+    app.kubernetes.io/managed-by: kustomize
+  name: ci-job-42
+spec:
+  classRef: pixel-api34
+  poolRef: default-pool
+  requester: "ci/job/42"
+  ttlSeconds: 600

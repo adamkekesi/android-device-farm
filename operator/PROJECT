@@ -8,4 +8,36 @@ layout:
 - go.kubebuilder.io/v4
 projectName: devicefarm
 repo: github.com/adamkekesi/android-device-farm/operator
+resources:
+- api:
+    crdVersion: v1
+  domain: example.com
+  group: farm
+  kind: DeviceClass
+  path: github.com/adamkekesi/android-device-farm/operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: example.com
+  group: farm
+  kind: DevicePool
+  path: github.com/adamkekesi/android-device-farm/operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: example.com
+  group: farm
+  kind: Device
+  path: github.com/adamkekesi/android-device-farm/operator/api/v1alpha1
+  version: v1alpha1
+- api:
+    crdVersion: v1
+    namespaced: true
+  domain: example.com
+  group: farm
+  kind: DeviceLease
+  path: github.com/adamkekesi/android-device-farm/operator/api/v1alpha1
+  version: v1alpha1
 version: "3"

@@ -1,0 +1,13 @@
+# Devices are normally created and owned by the operator (from a DevicePool),
+# not authored by users. This sample exists for schema round-trip testing.
+apiVersion: farm.example.com/v1alpha1
+kind: Device
+metadata:
+  labels:
+    app.kubernetes.io/name: devicefarm
+    app.kubernetes.io/managed-by: kustomize
+  name: device-sample
+spec:
+  classRef: pixel-api34
+  poolRef: default-pool
+  providerType: emulator

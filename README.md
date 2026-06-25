@@ -85,6 +85,11 @@ controller-gen — already resolve to the pinned versions with no workaround.
 | `DeviceLease` | namespaced | user     | A workflow's exclusive claim on a device           |
 | `Device`      | namespaced | operator | One running device instance (operator-managed)     |
 
+Short names: `dfc` (DeviceClass), `dfp` (DevicePool), `dfd` (Device), `dfl`
+(DeviceLease). Use the short name or the fully-qualified `deviceclasses.farm.example.com`
+for DeviceClass — the bare `deviceclass` resolves to the built-in
+`resource.k8s.io/DeviceClass` (Dynamic Resource Allocation) on k8s 1.31+.
+
 See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
 
 ## Status
@@ -96,5 +101,10 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   processor, reaper, groups-engine, storage temp/apk/image) with a schema-migrate
   hook Job and an Ingress. Verified on kind: the STF UI serves at the ingress host
   (`/` → `/auth/mock/`, mock login returns 200). Device registration is Phase 3.
+- **Phase 2 — operator API types:** done. The four CRDs (`DeviceClass`, `DevicePool`,
+  `Device`, `DeviceLease`) are defined in `operator/api/v1alpha1` with validation
+  markers, defaults, and printer columns. Verified on kind: CRDs install, samples
+  round-trip, defaulting applies, and invalid input is rejected. Reconcilers come
+  in Phases 3–5.
 
 See the implementation plan for the phase breakdown and acceptance criteria.

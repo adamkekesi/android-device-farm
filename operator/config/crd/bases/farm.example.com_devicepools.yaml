@@ -1,0 +1,203 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: devicepools.farm.example.com
+spec:
+  group: farm.example.com
+  names:
+    kind: DevicePool
+    listKind: DevicePoolList
+    plural: devicepools
+    shortNames:
+    - dfp
+    singular: devicepool
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.maxConcurrent
+      name: MaxConcurrent
+      type: integer
+    - jsonPath: .spec.evictionPolicy
+      name: Eviction
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: DevicePool is the Schema for the devicepools API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of DevicePool
+            properties:
+              classes:
+                description: Classes the pool can provision, each with warm bounds.
+                items:
+                  description: PoolClass references a DeviceClass with per-class warm
+                    bounds.
+                  properties:
+                    maxWarm:
+                      description: MaxWarm caps idle devices of this class (0 = no
+                        extra cap beyond the pool).
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    minWarm:
+                      default: 0
+                      description: MinWarm is the number of ready devices to keep
+                        idle.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    name:
+                      description: Name of the (cluster-scoped) DeviceClass.
+                      type: string
+                  required:
+                  - minWarm
+                  - name
+                  type: object
+                minItems: 1
+                type: array
+              evictionPolicy:
+                default: LRUIdle
+                description: EvictionPolicy decides how room is made when at capacity.
+                enum:
+                - LRUIdle
+                - None
+                type: string
+              maxConcurrent:
+                default: 1
+                description: MaxConcurrent is the global cap on running devices in
+                  this pool.
+                format: int32
+                minimum: 1
+                type: integer
+              stfRef:
+                description: STFRef is how ready devices are registered into STF.
+                properties:
+                  adbHost:
+                    description: ADBHost is the adb host STF providers connect to.
+                    type: string
+                  url:
+                    description: URL is the STF base URL (e.g. http://devicefarmer-app:3000).
+                    type: string
+                type: object
+            required:
+            - classes
+            - maxConcurrent
+            type: object
+          status:
+            description: status defines the observed state of DevicePool
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              perClass:
+                description: PerClass holds the device tally per class.
+                items:
+                  description: ClassCounts is the per-class device tally.
+                  properties:
+                    class:
+                      type: string
+                    leased:
+                      format: int32
+                      type: integer
+                    provisioning:
+                      format: int32
+                      type: integer
+                    ready:
+                      format: int32
+                      type: integer
+                    total:
+                      format: int32
+                      type: integer
+                  required:
+                  - class
+                  - leased
+                  - provisioning
+                  - ready
+                  - total
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

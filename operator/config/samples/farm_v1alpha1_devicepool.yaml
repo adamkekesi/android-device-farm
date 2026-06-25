@@ -1,0 +1,17 @@
+apiVersion: farm.example.com/v1alpha1
+kind: DevicePool
+metadata:
+  labels:
+    app.kubernetes.io/name: devicefarm
+    app.kubernetes.io/managed-by: kustomize
+  name: default-pool
+spec:
+  classes:
+    - name: pixel-api34
+      minWarm: 2
+      maxWarm: 4
+  maxConcurrent: 6
+  evictionPolicy: LRUIdle
+  stfRef:
+    url: http://devicefarmer-app.devicefarmer.svc.cluster.local:3000
+    adbHost: devicefarmer-adb.devicefarmer.svc.cluster.local

@@ -1,0 +1,32 @@
+apiVersion: farm.example.com/v1alpha1
+kind: DeviceClass
+metadata:
+  labels:
+    app.kubernetes.io/name: devicefarm
+    app.kubernetes.io/managed-by: kustomize
+  name: pixel-api34
+spec:
+  providerType: emulator
+  image: us-docker.pkg.dev/android-emulator-268719/images/30-google-x64:30.1.2
+  apiLevel: 34
+  arch: x86_64
+  avd:
+    skin: pixel_5
+    density: 440
+    extraArgs:
+      - -no-window
+      - -no-boot-anim
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
+  nodeSelector:
+    farm.example.com/kvm: "true"
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: android-emulator
+      effect: NoSchedule
