@@ -1,0 +1,67 @@
+{{- if .Values.provider.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-provider
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "provider") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "provider") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "provider") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: adb-bin
+          emptyDir: {}
+      initContainers:
+        # The stf image has no adb client; copy the glibc adb binary from the adb
+        # image (compatible with the Ubuntu-based stf image) into a shared volume.
+        - name: copy-adb
+          image: "{{ .Values.adb.image.repository }}:{{ .Values.adb.image.tag }}"
+          imagePullPolicy: {{ .Values.adb.image.pullPolicy }}
+          command: ["sh", "-c", "cp /opt/platform-tools/adb /adbbin/adb && chmod +x /adbbin/adb"]
+          volumeMounts:
+            - { name: adb-bin, mountPath: /adbbin }
+      containers:
+        - name: provider
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Wrap so the shared adb is first on PATH while keeping the image's PATH
+          # (stf lives at /app/bin). $POD_NAME/$POD_IP come from the env below.
+          command: ["sh", "-c"]
+          args:
+            - |
+              export PATH="/opt/adb:$PATH"
+              exec stf provider \
+                --name "{{ .Values.provider.name }}-$POD_NAME" \
+                --connect-sub "tcp://{{ include "devicefarmer.triproxyDevHost" . }}:7250" \
+                --connect-push "tcp://{{ include "devicefarmer.triproxyDevHost" . }}:7270" \
+                --storage-url "{{ include "devicefarmer.publicUrl" . }}/" \
+                --public-ip "$POD_IP" \
+                --adb-host "{{ include "devicefarmer.fullname" . }}-adb" \
+                --adb-port 5037 \
+                --min-port {{ .Values.provider.minPort }} \
+                --max-port {{ .Values.provider.maxPort }} \
+                --heartbeat-interval 10000 \
+                --allow-remote \
+                --screen-ws-url-pattern "{{ include "devicefarmer.wsUrl" . }}/d/{{ .Values.provider.name }}/<%= serial %>/<%= publicPort %>/"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          volumeMounts:
+            - { name: adb-bin, mountPath: /opt/adb }
+          {{- with .Values.provider.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

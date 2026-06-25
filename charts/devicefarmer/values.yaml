@@ -70,6 +70,26 @@ storage:
     size: 20Gi
     storageClass: ""
 
+# adb server that STF's provider attaches to. The android-device-farm operator
+# `adb connect`s each Ready device to this server, and the provider registers it.
+adb:
+  enabled: true
+  image:
+    repository: devicefarmer/adb
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources: {}
+
+# STF provider: bridges adb devices into STF over the dev-side triproxy and serves
+# the per-device screen/input WebSocket on a port range. --allow-remote lets it
+# accept TCP-connected emulators.
+provider:
+  enabled: true
+  name: k8s
+  minPort: 15000
+  maxPort: 15100
+  resources: {}
+
 ingress:
   enabled: true
   # Gateway API if available on the target cluster, otherwise ingress-nginx.

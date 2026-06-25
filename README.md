@@ -115,8 +115,11 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   emulator Pod (`/dev/kvm` passthrough, privileged, class image/nodeSelector/
   tolerations, boot-completed readiness probe) and an adb `Service`, publishes the
   adb endpoint, transitions to `Ready` on pod readiness, recreates the pod on
-  deletion, and fails on a missing class. **Remaining:** live-emulator boot on a
-  KVM cluster and STF registration (needs STF's `provider`/`adb` components) — the
-  heavier, real-cluster verification.
+  deletion, and fails on a missing class. STF registration is done too: the chart
+  adds STF's `adb` server + `provider` (verified live — the provider runs, has the
+  adb client, connects to the dev triproxy, and is "Tracking devices"), and the
+  operator `adb connect`s each Ready device to the adb server (envtest-verified Job
+  creation). **Remaining:** a live Android-emulator boot on a KVM cluster to watch
+  a device register end-to-end (the heavy verification deferred earlier).
 
 See the implementation plan for the phase breakdown and acceptance criteria.

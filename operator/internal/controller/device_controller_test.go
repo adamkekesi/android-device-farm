@@ -21,6 +21,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -150,6 +151,45 @@ var _ = Describe("Device controller", func() {
 
 		_, err := getPod(&farmv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: orphan}})
 		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+	})
+
+	It("registers a Ready device into STF via an adb-connect Job", func() {
+		pool := &farmv1alpha1.DevicePool{
+			ObjectMeta: metav1.ObjectMeta{Name: "stf-pool", Namespace: namespace},
+			Spec: farmv1alpha1.DevicePoolSpec{
+				Classes:       []farmv1alpha1.PoolClass{{Name: className}},
+				MaxConcurrent: 5,
+				STFRef:        &farmv1alpha1.STFRef{ADBHost: "devicefarmer-adb"},
+			},
+		}
+		Expect(k8sClient.Create(ctx, pool)).To(Succeed())
+		defer func() { _ = k8sClient.Delete(ctx, pool) }()
+
+		regName := "reg-" + string(uuidish())
+		Expect(k8sClient.Create(ctx, &farmv1alpha1.Device{
+			ObjectMeta: metav1.ObjectMeta{Name: regName, Namespace: namespace},
+			Spec:       farmv1alpha1.DeviceSpec{ClassRef: className, PoolRef: "stf-pool", ProviderType: farmv1alpha1.ProviderEmulator},
+		})).To(Succeed())
+		defer func() {
+			_ = k8sClient.Delete(ctx, &farmv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: regName, Namespace: namespace}})
+		}()
+
+		d := &farmv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: regName}}
+		var pod *corev1.Pod
+		Eventually(func() error { var e error; pod, e = getPod(d); return e }, timeout, interval).Should(Succeed())
+		pod.Status.Phase = corev1.PodRunning
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
+
+		var job batchv1.Job
+		Eventually(func() error {
+			return k8sClient.Get(ctx, client.ObjectKey{Name: regName + "-register", Namespace: namespace}, &job)
+		}, timeout, interval).Should(Succeed())
+
+		cmd := job.Spec.Template.Spec.Containers[0].Command
+		Expect(cmd).To(ContainElement("connect"))
+		Expect(cmd).To(ContainElement("devicefarmer-adb"))
+		Expect(cmd).To(ContainElement(regName + "-adb." + namespace + ".svc.cluster.local:5555"))
 	})
 })
 

@@ -1,0 +1,41 @@
+{{- if .Values.adb.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-adb
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb") | nindent 4 }}
+spec:
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "adb") | nindent 4 }}
+  ports:
+    - { name: adb, port: 5037, targetPort: 5037 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-adb
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "adb") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: adb
+          image: "{{ .Values.adb.image.repository }}:{{ .Values.adb.image.tag }}"
+          imagePullPolicy: {{ .Values.adb.image.pullPolicy }}
+          ports:
+            - { name: adb, containerPort: 5037 }
+          readinessProbe:
+            tcpSocket: { port: 5037 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.adb.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -40,6 +41,10 @@ const (
 	kvmHostPath = "/dev/kvm"
 	// labelDevice ties a Pod/Service back to its Device.
 	labelDevice = "farm.example.com/device"
+	// adbServerPort is the port STF's adb server listens on.
+	adbServerPort = "5037"
+	// adbClientImage carries an adb client for the registration Job.
+	adbClientImage = "devicefarmer/adb:latest"
 )
 
 // DeviceReconciler reconciles a Device object: it backs each Device with an
@@ -54,8 +59,10 @@ type DeviceReconciler struct {
 // +kubebuilder:rbac:groups=farm.example.com,resources=devices/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=farm.example.com,resources=devices/finalizers,verbs=update
 // +kubebuilder:rbac:groups=farm.example.com,resources=deviceclasses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=farm.example.com,resources=devicepools,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile backs a Device with an emulator Pod + adb Service and reflects pod
 // readiness in the Device phase.
@@ -90,7 +97,64 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	phase, reason, msg := phaseForPod(pod)
 	adb := fmt.Sprintf("%s.%s.svc.cluster.local:%d", adbServiceName(&device), device.Namespace, adbPort)
+
+	// Once the emulator is up, register it into STF by connecting its adb endpoint
+	// to STF's adb server (the provider then picks it up).
+	if phase == farmv1alpha1.DeviceReady {
+		if err := r.ensureRegistration(ctx, &device, adb); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	return r.setPhase(ctx, &device, phase, adb, reason, msg)
+}
+
+// ensureRegistration creates an idempotent Job that `adb connect`s the device to
+// STF's adb server, if the owning pool declares an stfRef.adbHost.
+func (r *DeviceReconciler) ensureRegistration(ctx context.Context, device *farmv1alpha1.Device, adbEndpoint string) error {
+	if device.Spec.PoolRef == "" {
+		return nil
+	}
+	var pool farmv1alpha1.DevicePool
+	if err := r.Get(ctx, client.ObjectKey{Name: device.Spec.PoolRef, Namespace: device.Namespace}, &pool); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if pool.Spec.STFRef == nil || pool.Spec.STFRef.ADBHost == "" {
+		return nil
+	}
+
+	jobName := device.Name + "-register"
+	if err := r.Get(ctx, client.ObjectKey{Name: jobName, Namespace: device.Namespace}, &batchv1.Job{}); err == nil {
+		return nil
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+
+	backoff := int32(5)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName,
+			Namespace: device.Namespace,
+			Labels:    deviceSelector(device),
+		},
+		Spec: batchv1.JobSpec{
+			BackoffLimit: &backoff,
+			Template: corev1.PodTemplateSpec{
+				Spec: corev1.PodSpec{
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Containers: []corev1.Container{{
+						Name:    "register",
+						Image:   adbClientImage,
+						Command: []string{"adb", "-H", pool.Spec.STFRef.ADBHost, "-P", adbServerPort, "connect", adbEndpoint},
+					}},
+				},
+			},
+		},
+	}
+	if err := ctrl.SetControllerReference(device, job, r.Scheme); err != nil {
+		return err
+	}
+	return r.Create(ctx, job)
 }
 
 func adbServiceName(d *farmv1alpha1.Device) string  { return d.Name + "-adb" }
@@ -249,6 +313,7 @@ func (r *DeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&farmv1alpha1.Device{}).
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Service{}).
+		Owns(&batchv1.Job{}).
 		Named("device").
 		Complete(r)
 }
