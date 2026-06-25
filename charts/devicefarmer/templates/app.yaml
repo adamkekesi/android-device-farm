@@ -1,0 +1,52 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-app
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "app") | nindent 4 }}
+spec:
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "app") | nindent 4 }}
+  ports:
+    - { name: http, port: 3000, targetPort: 3000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-app
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "app") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.app.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "app") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "app") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "devicefarmer.waitForRethinkdb" . | nindent 8 }}
+      containers:
+        - name: app
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "app"]
+          args:
+            - --port
+            - "3000"
+            - --auth-url
+            - {{ printf "%s/auth/mock/" (include "devicefarmer.publicUrl" .) | quote }}
+            - --websocket-url
+            - {{ printf "%s/" (include "devicefarmer.wsUrl" .) | quote }}
+          env:
+            {{- include "devicefarmer.rethinkdbEnv" . | nindent 12 }}
+            {{- include "devicefarmer.secretEnv" . | nindent 12 }}
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}

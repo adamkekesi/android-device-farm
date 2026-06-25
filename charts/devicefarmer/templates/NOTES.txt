@@ -1,0 +1,39 @@
+DeviceFarmer (STF) control plane "{{ .Release.Name }}" installed in namespace "{{ .Release.Namespace }}".
+
+Components: rethinkdb (StatefulSet), triproxy-app, triproxy-dev, app, auth (mock),
+api, websocket, processor, reaper, groups-engine, storage-temp, storage-apk,
+storage-image. Schema migration ran as a post-install Job.
+
+1. Watch everything come up:
+
+   kubectl -n {{ .Release.Namespace }} get pods -w
+
+2. Reach the UI at:
+
+   {{ include "devicefarmer.publicUrl" . }}/
+
+{{- if .Values.ingress.enabled }}
+   The Ingress host is "{{ .Values.ingress.host }}" (class: {{ .Values.ingress.className | default "default" }}).
+   For local kind testing, point that host at your ingress controller, e.g.:
+
+     echo "127.0.0.1 {{ .Values.ingress.host }}" | sudo tee -a /etc/hosts
+
+   (with the ingress controller reachable on 127.0.0.1, e.g. via port-forward or
+   kind extraPortMappings).
+{{- end }}
+
+3. Log in with the mock auth provider using the seeded admin account:
+
+     name:  {{ .Values.admin.name }}
+     email: {{ .Values.admin.email }}
+
+{{- if not .Values.secret.existingSecret }}
+{{- if not .Values.secret.value }}
+
+NOTE: a random session SECRET was generated and stored in the Secret
+"{{ include "devicefarmer.secretName" . }}". It is preserved across upgrades.
+{{- end }}
+{{- end }}
+
+Devices are NOT part of this chart — the android-device-farm operator registers
+emulators/physical devices into this control plane (Phase 3).

@@ -1,0 +1,104 @@
+{{/* App-side and dev-side ZeroMQ triproxies. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.triproxyAppHost" . }}
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "triproxy-app") | nindent 4 }}
+spec:
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "triproxy-app") | nindent 4 }}
+  ports:
+    - { name: pub, port: 7150, targetPort: 7150 }
+    - { name: dealer, port: 7160, targetPort: 7160 }
+    - { name: pull, port: 7170, targetPort: 7170 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.triproxyAppHost" . }}
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "triproxy-app") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.triproxyApp.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "triproxy-app") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "triproxy-app") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: triproxy-app
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "triproxy", "app"]
+          args:
+            - --bind-pub
+            - "tcp://*:7150"
+            - --bind-dealer
+            - "tcp://*:7160"
+            - --bind-pull
+            - "tcp://*:7170"
+          ports:
+            - { name: pub, containerPort: 7150 }
+            - { name: dealer, containerPort: 7160 }
+            - { name: pull, containerPort: 7170 }
+          readinessProbe:
+            tcpSocket: { port: 7160 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.triproxyDevHost" . }}
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "triproxy-dev") | nindent 4 }}
+spec:
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "triproxy-dev") | nindent 4 }}
+  ports:
+    - { name: pub, port: 7250, targetPort: 7250 }
+    - { name: dealer, port: 7260, targetPort: 7260 }
+    - { name: pull, port: 7270, targetPort: 7270 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.triproxyDevHost" . }}
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "triproxy-dev") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.triproxyDev.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "triproxy-dev") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "triproxy-dev") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: triproxy-dev
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "triproxy", "dev"]
+          args:
+            - --bind-pub
+            - "tcp://*:7250"
+            - --bind-dealer
+            - "tcp://*:7260"
+            - --bind-pull
+            - "tcp://*:7270"
+          ports:
+            - { name: pub, containerPort: 7250 }
+            - { name: dealer, containerPort: 7260 }
+            - { name: pull, containerPort: 7270 }
+          readinessProbe:
+            tcpSocket: { port: 7260 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}

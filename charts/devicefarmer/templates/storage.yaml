@@ -1,0 +1,167 @@
+{{/* storage-temp: stores uploaded artifacts on a PVC */}}
+{{- if .Values.storage.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-storage-temp
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-temp") | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.storage.persistence.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.persistence.size }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-storage-temp
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-temp") | nindent 4 }}
+spec:
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "storage-temp") | nindent 4 }}
+  ports:
+    - { name: http, port: 3000, targetPort: 3000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-storage-temp
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-temp") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.storageTemp.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "storage-temp") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-temp") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: storage-temp
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "storage-temp"]
+          args:
+            - --port
+            - "3000"
+            - --save-dir
+            - /data
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: data
+          {{- if .Values.storage.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "devicefarmer.fullname" . }}-storage-temp
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+{{/* storage-plugin-apk */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-storage-apk
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-apk") | nindent 4 }}
+spec:
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "storage-apk") | nindent 4 }}
+  ports:
+    - { name: http, port: 3000, targetPort: 3000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-storage-apk
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-apk") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.storageApk.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "storage-apk") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-apk") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: storage-apk
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "storage-plugin-apk"]
+          args:
+            - --port
+            - "3000"
+            - --storage-url
+            - {{ printf "%s/" (include "devicefarmer.publicUrl" .) | quote }}
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+{{/* storage-plugin-image */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-storage-image
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-image") | nindent 4 }}
+spec:
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "storage-image") | nindent 4 }}
+  ports:
+    - { name: http, port: 3000, targetPort: 3000 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-storage-image
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-image") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.storageImage.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "storage-image") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "storage-image") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: storage-image
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "storage-plugin-image"]
+          args:
+            - --port
+            - "3000"
+            - --storage-url
+            - {{ printf "%s/" (include "devicefarmer.publicUrl" .) | quote }}
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            tcpSocket: { port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}

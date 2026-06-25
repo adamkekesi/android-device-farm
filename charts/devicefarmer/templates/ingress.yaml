@@ -1,0 +1,69 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "ingress") | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        # Order mirrors STF's nginx: most-specific storage paths first, then
+        # socket.io (websocket), auth, api, and the app as the catch-all.
+        # pathType Prefix => ingress-nginx routes by longest matching prefix.
+        paths:
+          - path: /s/image/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-storage-image
+                port: { number: 3000 }
+          - path: /s/apk/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-storage-apk
+                port: { number: 3000 }
+          - path: /s/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-storage-temp
+                port: { number: 3000 }
+          - path: /socket.io/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-websocket
+                port: { number: 3000 }
+          - path: /auth/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-auth
+                port: { number: 3000 }
+          - path: /api/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-api
+                port: { number: 3000 }
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-app
+                port: { number: 3000 }
+{{- end }}

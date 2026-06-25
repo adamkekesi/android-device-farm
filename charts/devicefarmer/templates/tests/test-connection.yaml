@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "devicefarmer.fullname" . }}-test-connection"
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "test") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.10.1
+      # The app redirects unauthenticated requests (302); a successful connection
+      # is enough to prove the control plane is serving.
+      command: ["curl"]
+      args:
+        - -sS
+        - -o
+        - /dev/null
+        - -w
+        - "app HTTP %{http_code}\n"
+        - "http://{{ include "devicefarmer.fullname" . }}-app:3000/"

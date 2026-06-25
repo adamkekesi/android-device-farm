@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.rethinkdbHost" . }}
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "rethinkdb") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "rethinkdb") | nindent 4 }}
+  ports:
+    - { name: driver, port: 28015, targetPort: 28015 }
+    - { name: cluster, port: 29015, targetPort: 29015 }
+    - { name: admin, port: 8080, targetPort: 8080 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "devicefarmer.rethinkdbHost" . }}
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "rethinkdb") | nindent 4 }}
+spec:
+  serviceName: {{ include "devicefarmer.rethinkdbHost" . }}
+  replicas: 1
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "rethinkdb") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "rethinkdb") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.podSecurityContext }}
+      securityContext: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: rethinkdb
+          image: "{{ .Values.rethinkdb.image.repository }}:{{ .Values.rethinkdb.image.tag }}"
+          imagePullPolicy: {{ .Values.rethinkdb.image.pullPolicy }}
+          command: ["rethinkdb", "--bind", "all", "--no-update-check", "--cache-size", "{{ .Values.rethinkdb.cacheSizeMb }}"]
+          ports:
+            - { name: driver, containerPort: 28015 }
+            - { name: cluster, containerPort: 29015 }
+            - { name: admin, containerPort: 8080 }
+          readinessProbe:
+            tcpSocket: { port: 28015 }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 28015 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          {{- with .Values.rethinkdb.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+  {{- if .Values.rethinkdb.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with .Values.rethinkdb.persistence.storageClass }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.rethinkdb.persistence.size }}
+  {{- else }}
+      volumes:
+        - name: data
+          emptyDir: {}
+  {{- end }}

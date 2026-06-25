@@ -89,5 +89,12 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
 
 ## Status
 
-Phase 0 (scaffolding & dev loop) is in progress. See the implementation plan for
-the phase breakdown and acceptance criteria.
+- **Phase 0 — scaffolding & dev loop:** done. Toolchain provisions, `kind-up`
+  yields a working cluster, the operator image builds, and the manager pod runs.
+- **Phase 1 — DeviceFarmer control-plane chart:** done. `charts/devicefarmer`
+  deploys the full STF topology (RethinkDB, triproxies, app, auth, api, websocket,
+  processor, reaper, groups-engine, storage temp/apk/image) with a schema-migrate
+  hook Job and an Ingress. Verified on kind: the STF UI serves at the ingress host
+  (`/` → `/auth/mock/`, mock login returns 200). Device registration is Phase 3.
+
+See the implementation plan for the phase breakdown and acceptance criteria.

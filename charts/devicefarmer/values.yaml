@@ -1,52 +1,91 @@
 # DeviceFarmer (STF) control-plane values.
 #
-# Phase 1 scaffold. The chart templates are not implemented yet — this file
-# documents the value surface the plan calls for (image tags, replica counts,
-# RethinkDB persistence, auth provider, ingress host, TLS). See
-# docs/IMPLEMENTATION_PLAN.md §6 Phase 1.
+# Modelled on DeviceFarmer's distributed (systemd/docker-compose) topology — each
+# STF process is its own Deployment, RethinkDB is a StatefulSet, schema migration
+# is a post-install/upgrade hook Job, and an Ingress fronts the HTTP services.
+# See docs/IMPLEMENTATION_PLAN.md §6 Phase 1.
 
-# Use the maintained devicefarmer/* images, NOT the abandoned openstf/* ones.
+# Use the maintained devicefarmer/* image (NOT the abandoned openstf/*).
 image:
   repository: devicefarmer/stf
-  tag: "3.7.2"
+  tag: ""                 # defaults to .Chart.appVersion (3.7.7)
   pullPolicy: IfNotPresent
 
-# STF is a set of cooperating processes; each becomes its own Deployment.
-# Replica counts per component (filled in during Phase 1).
-replicas:
-  app: 1
-  auth: 1
-  api: 1
-  websocket: 1
-  processor: 1
-  triproxyApp: 1
-  triproxyDev: 1
-  reaper: 1
-  storagePlugin: 1
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Shared session secret used by app/auth/api/websocket/groups-engine.
+secret:
+  # If empty, the chart generates a random secret on first install and preserves
+  # it across upgrades (via lookup). Do NOT commit a real secret here.
+  value: ""
+  # Or point at an existing Secret that has a "secret" key.
+  existingSecret: ""
+
+# Seeded by `stf migrate` on first install (admin user + root group).
+admin:
+  name: "administrator"
+  email: "admin@example.com"
+rootGroupName: "Common"
+
+# Per-component replica counts.
+components:
+  app: { replicas: 1 }
+  auth: { replicas: 1 }
+  api: { replicas: 1 }
+  websocket: { replicas: 1 }
+  processor: { replicas: 1 }
+  reaper: { replicas: 1 }
+  groupsEngine: { replicas: 1 }
+  triproxyApp: { replicas: 1 }
+  triproxyDev: { replicas: 1 }
+  storageTemp: { replicas: 1 }
+  storageApk: { replicas: 1 }
+  storageImage: { replicas: 1 }
+
+# Resources applied to STF process containers (override per-need).
+resources: {}
+
+# Image used by init containers that wait for RethinkDB.
+waitImage: "busybox:1.36"
 
 rethinkdb:
-  image: rethinkdb:2.4
-  # RethinkDB is a StatefulSet with a PVC (managed dependency of STF).
+  image:
+    repository: rethinkdb
+    # Docker Hub publishes 2.4.4 only as the -bookworm-slim variant (no plain 2.4.4).
+    tag: "2.4.4-bookworm-slim"
+    pullPolicy: IfNotPresent
+  cacheSizeMb: 1024
   persistence:
     enabled: true
     size: 10Gi
     storageClass: ""
+  resources: {}
 
-# Schema migration runs as a Helm pre-install/upgrade hook Job and seeds the
-# default admin + root group on first migrate.
-migrate:
-  enabled: true
-
-# Start with STF's built-in mock auth; swap for oauth/saml later.
-auth:
-  provider: mock
+# Persistent storage for stf storage-temp (uploaded artifacts).
+storage:
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
 
 ingress:
   enabled: true
   # Gateway API if available on the target cluster, otherwise ingress-nginx.
   # Do NOT introduce Traefik v1 CRDs.
-  className: ""
+  className: "nginx"
   host: stf.local
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
   tls:
     enabled: false
     secretName: ""
+
+podSecurityContext: {}
+securityContext: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

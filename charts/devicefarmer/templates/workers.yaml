@@ -1,0 +1,117 @@
+{{/* processor: bridges app-side and dev-side dealers */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-processor
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "processor") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.processor.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "processor") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "processor") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "devicefarmer.waitForRethinkdb" . | nindent 8 }}
+      containers:
+        - name: processor
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "processor"]
+          # $(POD_NAME) gives each processor a unique name in STF's registry.
+          args:
+            - "$(POD_NAME)"
+            - --connect-app-dealer
+            - "tcp://{{ include "devicefarmer.triproxyAppHost" . }}:7160"
+            - --connect-dev-dealer
+            - "tcp://{{ include "devicefarmer.triproxyDevHost" . }}:7260"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- include "devicefarmer.rethinkdbEnv" . | nindent 12 }}
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+{{/* reaper: marks devices absent when heartbeats stop */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-reaper
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "reaper") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.reaper.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "reaper") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "reaper") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "devicefarmer.waitForRethinkdb" . | nindent 8 }}
+      containers:
+        - name: reaper
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "reaper", "dev"]
+          args:
+            - --connect-push
+            - "tcp://{{ include "devicefarmer.triproxyDevHost" . }}:7270"
+            - --connect-sub
+            - "tcp://{{ include "devicefarmer.triproxyAppHost" . }}:7150"
+            - --heartbeat-timeout
+            - "30000"
+          env:
+            {{- include "devicefarmer.rethinkdbEnv" . | nindent 12 }}
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+{{/* groups-engine: device-group scheduling */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-groups-engine
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "groups-engine") | nindent 4 }}
+spec:
+  replicas: {{ .Values.components.groupsEngine.replicas }}
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "groups-engine") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "groups-engine") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "devicefarmer.waitForRethinkdb" . | nindent 8 }}
+      containers:
+        - name: groups-engine
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "groups-engine"]
+          args:
+            - --connect-sub
+            - "tcp://{{ include "devicefarmer.triproxyAppHost" . }}:7150"
+            - --connect-push
+            - "tcp://{{ include "devicefarmer.triproxyAppHost" . }}:7170"
+            - --connect-sub-dev
+            - "tcp://{{ include "devicefarmer.triproxyDevHost" . }}:7250"
+            - --connect-push-dev
+            - "tcp://{{ include "devicefarmer.triproxyDevHost" . }}:7270"
+          env:
+            {{- include "devicefarmer.rethinkdbEnv" . | nindent 12 }}
+            {{- include "devicefarmer.secretEnv" . | nindent 12 }}
+          {{- with .Values.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}

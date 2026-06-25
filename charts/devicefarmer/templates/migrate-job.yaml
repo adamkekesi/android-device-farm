@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-migrate
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "migrate") | nindent 4 }}
+  annotations:
+    # Run after RethinkDB exists; rerun on upgrades. The init container blocks
+    # until RethinkDB is reachable, so this works with or without `helm --wait`.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        {{- include "devicefarmer.waitForRethinkdb" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "devicefarmer.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["stf", "migrate"]
+          env:
+            {{- include "devicefarmer.rethinkdbEnv" . | nindent 12 }}
+            - name: STF_ROOT_GROUP_NAME
+              value: {{ .Values.rootGroupName | quote }}
+            - name: STF_ADMIN_NAME
+              value: {{ .Values.admin.name | quote }}
+            - name: STF_ADMIN_EMAIL
+              value: {{ .Values.admin.email | quote }}
