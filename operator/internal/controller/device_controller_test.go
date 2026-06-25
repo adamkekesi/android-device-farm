@@ -239,6 +239,43 @@ var _ = Describe("Device controller", func() {
 			return err == nil && np.UID != first.UID
 		}, timeout, interval).Should(BeTrue())
 	})
+
+	It("does not create a pod for a physical device and reflects the provider endpoint", func() {
+		Expect(k8sClient.Create(ctx, &farmv1alpha1.DeviceClass{
+			ObjectMeta: metav1.ObjectMeta{Name: "phys-class"},
+			Spec:       farmv1alpha1.DeviceClassSpec{ProviderType: farmv1alpha1.ProviderPhysical},
+		})).To(Succeed())
+		defer func() {
+			_ = k8sClient.Delete(ctx, &farmv1alpha1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: "phys-class"}})
+		}()
+
+		pname := "phys-" + string(uuidish())
+		Expect(k8sClient.Create(ctx, &farmv1alpha1.Device{
+			ObjectMeta: metav1.ObjectMeta{Name: pname, Namespace: namespace},
+			Spec: farmv1alpha1.DeviceSpec{
+				ClassRef: "phys-class", ProviderType: farmv1alpha1.ProviderPhysical, ADBEndpoint: "usb-host-1:5555",
+			},
+		})).To(Succeed())
+		defer func() {
+			_ = k8sClient.Delete(ctx, &farmv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: pname, Namespace: namespace}})
+		}()
+
+		Eventually(func() farmv1alpha1.DevicePhase {
+			var d farmv1alpha1.Device
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: pname, Namespace: namespace}, &d)
+			return d.Status.Phase
+		}, timeout, interval).Should(Equal(farmv1alpha1.DeviceReady))
+
+		By("not creating an emulator pod")
+		var pod corev1.Pod
+		err := k8sClient.Get(ctx, client.ObjectKey{Name: pname + "-emulator", Namespace: namespace}, &pod)
+		Expect(apierrors.IsNotFound(err)).To(BeTrue())
+
+		By("reflecting the provider adb endpoint")
+		var d farmv1alpha1.Device
+		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: pname, Namespace: namespace}, &d)).To(Succeed())
+		Expect(d.Status.ADBEndpoint).To(Equal("usb-host-1:5555"))
+	})
 })
 
 // uuidish returns a short unique-ish suffix so parallel specs don't collide.

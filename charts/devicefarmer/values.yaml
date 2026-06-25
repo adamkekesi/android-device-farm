@@ -90,6 +90,21 @@ provider:
   maxPort: 15100
   resources: {}
 
+# Physical-device provider (Phase 6, future-ready). A DaemonSet on USB-host nodes
+# runs adb and registers attached devices as physical Device CRs that flow through
+# the same lease/health contract. Requires real USB hardware; disabled by default.
+physicalProvider:
+  enabled: false
+  nodeSelector:
+    farm.example.com/usb-host: "true"
+  # DeviceClass (providerType: physical) discovered devices are registered under.
+  deviceClass: physical-pixel
+  # adb endpoint advertised for discovered devices. Remote adb reachability for
+  # physical devices is environment-specific (USB host networking); leave empty to
+  # advertise the raw serial.
+  adbHostOverride: ""
+  resources: {}
+
 ingress:
   enabled: true
   # Gateway API if available on the target cluster, otherwise ingress-nginx.

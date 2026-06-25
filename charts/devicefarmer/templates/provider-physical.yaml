@@ -1,0 +1,114 @@
+{{- if .Values.physicalProvider.enabled }}
+{{/*
+Phase 6 scaffold. A DaemonSet on USB-host nodes runs adb (with /dev/bus/usb passed
+through) and registers attached devices as providerType: physical Device CRs, which
+then flow through the same DeviceLease/health contract as emulators. Remote-adb
+reachability for physical devices is environment-specific and left to the operator.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-provider
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-provider") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-provider
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-provider") | nindent 4 }}
+rules:
+  - apiGroups: ["farm.example.com"]
+    resources: ["devices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-provider
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-provider") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "devicefarmer.fullname" . }}-physical-provider
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "devicefarmer.fullname" . }}-physical-provider
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-provider
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-provider") | nindent 4 }}
+data:
+  register.sh: |
+    #!/bin/sh
+    set -u
+    API=https://kubernetes.default.svc
+    SA=/var/run/secrets/kubernetes.io/serviceaccount
+    NS=$(cat "$SA/namespace")
+    TOKEN=$(cat "$SA/token")
+    adb start-server >/dev/null 2>&1 || true
+    echo "physical provider on node ${NODE_NAME} (class ${DEVICE_CLASS})"
+    while true; do
+      adb devices | awk 'NR>1 && $2=="device"{print $1}' | while read -r serial; do
+        name="phys-$(printf '%s' "$serial" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9' '-')"
+        adb_ep="${ADB_HOST:-$serial}"
+        body="{\"apiVersion\":\"farm.example.com/v1alpha1\",\"kind\":\"Device\",\"metadata\":{\"name\":\"$name\",\"namespace\":\"$NS\",\"labels\":{\"farm.example.com/class\":\"$DEVICE_CLASS\"}},\"spec\":{\"classRef\":\"$DEVICE_CLASS\",\"providerType\":\"physical\",\"serial\":\"$serial\",\"nodeName\":\"$NODE_NAME\",\"adbEndpoint\":\"$adb_ep\"}}"
+        wget -q -O- --no-check-certificate \
+          --header "Authorization: Bearer $TOKEN" \
+          --header "Content-Type: application/json" \
+          --post-data "$body" \
+          "$API/apis/farm.example.com/v1alpha1/namespaces/$NS/devices" >/dev/null 2>&1 \
+          || echo "register $name: exists or failed (scaffold)"
+      done
+      sleep 15
+    done
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-provider
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-provider") | nindent 4 }}
+spec:
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "physical-provider") | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-provider") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "devicefarmer.fullname" . }}-physical-provider
+      nodeSelector: {{- toYaml .Values.physicalProvider.nodeSelector | nindent 8 }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: provider
+          image: "{{ .Values.adb.image.repository }}:{{ .Values.adb.image.tag }}"
+          imagePullPolicy: {{ .Values.adb.image.pullPolicy }}
+          command: ["sh", "/agent/register.sh"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: DEVICE_CLASS
+              value: {{ .Values.physicalProvider.deviceClass | quote }}
+            - name: ADB_HOST
+              value: {{ .Values.physicalProvider.adbHostOverride | quote }}
+          securityContext:
+            privileged: true   # USB device access
+          volumeMounts:
+            - { name: usb, mountPath: /dev/bus/usb }
+            - { name: agent, mountPath: /agent }
+          {{- with .Values.physicalProvider.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: usb
+          hostPath:
+            path: /dev/bus/usb
+        - name: agent
+          configMap:
+            name: {{ include "devicefarmer.fullname" . }}-physical-provider
+{{- end }}

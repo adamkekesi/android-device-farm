@@ -54,8 +54,18 @@ spec:
           spec:
             description: spec defines the desired state of Device
             properties:
+              adbEndpoint:
+                description: |-
+                  ADBEndpoint is set by the physical-device provider (providerType physical):
+                  the host:port the attached device is reachable at. Ignored for emulators,
+                  which derive their endpoint from the operator-managed adb Service.
+                type: string
               classRef:
                 description: ClassRef is the DeviceClass this device instantiates.
+                type: string
+              nodeName:
+                description: NodeName is the USB-host node a physical device is attached
+                  to.
                 type: string
               poolRef:
                 description: PoolRef is the owning DevicePool (namespaced name).
@@ -67,6 +77,10 @@ spec:
                 enum:
                 - emulator
                 - physical
+                type: string
+              serial:
+                description: Serial is the physical device serial (kept stable via
+                  udev rules).
                 type: string
             required:
             - classRef

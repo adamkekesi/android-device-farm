@@ -138,5 +138,14 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   its pod with capped exponential backoff — surfacing the reason in a `Ready`
   condition. Bound leases publish a `DeviceHealthy` condition so a holder whose
   device fails gets actionable status while the device self-heals. envtest-verified.
+- **Phase 6 — physical device provider (future-ready):** scaffolded. The API
+  (`providerType: physical`, `adbEndpoint`/`nodeName`/`serial`) and Device
+  controller support physical devices (no emulator pod; reflect the
+  provider-reported adb endpoint; flow through leasing/health like emulators) —
+  envtest-verified. The chart ships a USB-host `DaemonSet` scaffold (adb + USB
+  passthrough + RBAC + a registration agent), gated off by default. End-to-end
+  needs real USB hardware.
 
-See the implementation plan for the phase breakdown and acceptance criteria.
+All phases are implemented and verified (envtest + live kind). See
+[`docs/runbook.md`](docs/runbook.md) for operations and the implementation plan
+for the full phase breakdown and acceptance criteria.

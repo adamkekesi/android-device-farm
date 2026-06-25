@@ -106,6 +106,12 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	// Physical devices are backed by hardware on a USB-host node (managed by the
+	// physical provider DaemonSet), not an emulator pod/Service.
+	if device.Spec.ProviderType == farmv1alpha1.ProviderPhysical {
+		return r.reconcilePhysical(ctx, &device)
+	}
+
 	if err := r.ensureService(ctx, &device); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -153,6 +159,29 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	default: // Provisioning
 		return r.setPhase(ctx, &device, phase, adb, reason, msg)
 	}
+}
+
+// reconcilePhysical handles providerType physical devices: the provider DaemonSet
+// owns the hardware lifecycle, so the operator just reflects the reported adb
+// endpoint, registers it into STF, and lets it flow through leasing/health like an
+// emulator. The provider deletes the Device when the hardware is unplugged.
+func (r *DeviceReconciler) reconcilePhysical(ctx context.Context, device *farmv1alpha1.Device) (ctrl.Result, error) {
+	adb := device.Spec.ADBEndpoint
+	if adb == "" {
+		return r.setPhase(ctx, device, farmv1alpha1.DeviceProvisioning, "",
+			"AwaitingProvider", "waiting for the physical provider to report an adb endpoint")
+	}
+	if err := r.ensureRegistration(ctx, device, adb); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.markHealthy(ctx, device); err != nil {
+		return ctrl.Result{}, err
+	}
+	phase, reason, msg := farmv1alpha1.DeviceReady, "Connected", "physical device connected"
+	if device.Status.LeaseRef != "" {
+		phase, reason, msg = farmv1alpha1.DeviceLeased, "Leased", "bound to lease "+device.Status.LeaseRef
+	}
+	return r.setPhase(ctx, device, phase, adb, reason, msg)
 }
 
 // recoverFailed recreates a failed device's pod with exponential backoff.

@@ -46,6 +46,20 @@ type DeviceSpec struct {
 	// ProviderType is denormalised from the class for scheduling decisions.
 	// +kubebuilder:default=emulator
 	ProviderType ProviderType `json:"providerType"`
+
+	// ADBEndpoint is set by the physical-device provider (providerType physical):
+	// the host:port the attached device is reachable at. Ignored for emulators,
+	// which derive their endpoint from the operator-managed adb Service.
+	// +optional
+	ADBEndpoint string `json:"adbEndpoint,omitempty"`
+
+	// NodeName is the USB-host node a physical device is attached to.
+	// +optional
+	NodeName string `json:"nodeName,omitempty"`
+
+	// Serial is the physical device serial (kept stable via udev rules).
+	// +optional
+	Serial string `json:"serial,omitempty"`
 }
 
 // DeviceStatus is the observed state of a Device.
