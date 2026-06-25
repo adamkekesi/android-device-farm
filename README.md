@@ -110,7 +110,13 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   `DevicePool` warm-pool reconciler in `operator/internal/controller`) is done and
   envtest-verified (84.8% pkg coverage): it provisions `minWarm` `Device`s per
   class, recreates them on deletion, reports per-class status + a `Ready` condition,
-  and flags missing `DeviceClass`es. Next: the `Device` reconciler (emulator pod +
-  adb Service + boot-completed readiness) and STF registration.
+  and flags missing `DeviceClass`es. Increment 2 (the `Device` reconciler) is also
+  done and envtest-verified (84.1% pkg coverage): it backs each `Device` with an
+  emulator Pod (`/dev/kvm` passthrough, privileged, class image/nodeSelector/
+  tolerations, boot-completed readiness probe) and an adb `Service`, publishes the
+  adb endpoint, transitions to `Ready` on pod readiness, recreates the pod on
+  deletion, and fails on a missing class. **Remaining:** live-emulator boot on a
+  KVM cluster and STF registration (needs STF's `provider`/`adb` components) — the
+  heavier, real-cluster verification.
 
 See the implementation plan for the phase breakdown and acceptance criteria.
