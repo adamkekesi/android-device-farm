@@ -106,5 +106,11 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   markers, defaults, and printer columns. Verified on kind: CRDs install, samples
   round-trip, defaulting applies, and invalid input is rejected. Reconcilers come
   in Phases 3–5.
+- **Phase 3 — emulator provisioning & warm pool:** in progress. Increment 1 (the
+  `DevicePool` warm-pool reconciler in `operator/internal/controller`) is done and
+  envtest-verified (84.8% pkg coverage): it provisions `minWarm` `Device`s per
+  class, recreates them on deletion, reports per-class status + a `Ready` condition,
+  and flags missing `DeviceClass`es. Next: the `Device` reconciler (emulator pod +
+  adb Service + boot-completed readiness) and STF registration.
 
 See the implementation plan for the phase breakdown and acceptance criteria.

@@ -1,11 +1,42 @@
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  labels:
-    app.kubernetes.io/name: devicefarm
-    app.kubernetes.io/managed-by: kustomize
   name: manager-role
 rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - farm.example.com
+  resources:
+  - deviceclasses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - farm.example.com
+  resources:
+  - devicepools
+  - devices
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - farm.example.com
+  resources:
+  - devicepools/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - farm.example.com
+  resources:
+  - devicepools/status
+  - devices/status
+  verbs:
+  - get
+  - patch
+  - update

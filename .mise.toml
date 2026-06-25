@@ -61,8 +61,10 @@ description = "Unit and envtest controller tests"
 dir = "operator"
 depends = ["generate"]
 run = [
-  "setup-envtest use {{env.ENVTEST_K8S_VERSION}} --bin-dir bin",
-  "KUBEBUILDER_ASSETS=$(setup-envtest use -i -p path {{env.ENVTEST_K8S_VERSION}} --bin-dir bin) go test ./... -coverprofile cover.out",
+  # Absolute --bin-dir so KUBEBUILDER_ASSETS resolves regardless of the per-package
+  # CWD `go test` uses.
+  "setup-envtest use {{env.ENVTEST_K8S_VERSION}} --bin-dir $PWD/bin",
+  "KUBEBUILDER_ASSETS=$(setup-envtest use -i -p path {{env.ENVTEST_K8S_VERSION}} --bin-dir $PWD/bin) go test ./... -coverprofile cover.out",
 ]
 sources = ["operator/**/*.go"]
 
