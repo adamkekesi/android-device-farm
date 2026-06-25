@@ -124,5 +124,12 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   sidecar that re-exposes the emulator's localhost-only adb on the pod network),
   and the STF provider reports it `Fully operational` — i.e. it appears in STF and
   is controllable.
+- **Phase 4 — leasing:** done. The `DeviceLease` reconciler binds a Ready, unleased
+  device with optimistic concurrency (no double-binding), tracks TTL via heartbeats
+  with a requeue-based reaper, recycles devices on release/expiry, provisions
+  on-demand up to `maxConcurrent`, and evicts an idle device of another class (LRU)
+  to serve a new type at capacity — the DevicePool reserves capacity for pending
+  leases so warm provisioning yields to demand. A `farmctl` client (`client/`)
+  provides acquire/heartbeat/release. envtest-verified (16 specs, ~83% coverage).
 
 See the implementation plan for the phase breakdown and acceptance criteria.

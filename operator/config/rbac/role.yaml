@@ -40,6 +40,7 @@ rules:
 - apiGroups:
   - farm.example.com
   resources:
+  - deviceleases
   - devicepools
   - devices
   verbs:
@@ -53,6 +54,7 @@ rules:
 - apiGroups:
   - farm.example.com
   resources:
+  - deviceleases/finalizers
   - devicepools/finalizers
   - devices/finalizers
   verbs:
@@ -60,6 +62,7 @@ rules:
 - apiGroups:
   - farm.example.com
   resources:
+  - deviceleases/status
   - devicepools/status
   - devices/status
   verbs:

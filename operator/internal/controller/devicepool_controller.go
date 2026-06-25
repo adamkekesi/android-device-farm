@@ -26,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	farmv1alpha1 "github.com/adamkekesi/android-device-farm/operator/api/v1alpha1"
@@ -66,6 +67,29 @@ func (r *DevicePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
+	// Total active devices (warm + on-demand) must stay within maxConcurrent, so
+	// warm provisioning yields to leased/evicted capacity instead of fighting it.
+	var total int32
+	var all []farmv1alpha1.Device
+	for _, ds := range active {
+		total += int32(len(ds))
+		all = append(all, ds...)
+	}
+
+	// Reserve capacity for pending lease demand current supply can't meet, so warm
+	// devices don't crowd out (or get refilled to fight eviction for) leased slots.
+	var reserved int32
+	for _, pc := range pool.Spec.Classes {
+		demand, err := pendingLeaseDemand(ctx, r.Client, pool.Namespace, pc.Name)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if supply := unclaimedSupply(all, pc.Name); demand > supply {
+			reserved += demand - supply
+		}
+	}
+	warmBudget := pool.Spec.MaxConcurrent - reserved
+
 	classMissing := false
 	for _, pc := range pool.Spec.Classes {
 		var dc farmv1alpha1.DeviceClass
@@ -78,10 +102,11 @@ func (r *DevicePoolReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, err
 		}
 
-		for have := int32(len(active[pc.Name])); have < pc.MinWarm; have++ {
+		for have := int32(len(active[pc.Name])); have < pc.MinWarm && total < warmBudget; have++ {
 			if err := r.createDevice(ctx, &pool, &dc); err != nil {
 				return ctrl.Result{}, err
 			}
+			total++
 			log.Info("created warm device", "pool", pool.Name, "class", pc.Name)
 		}
 	}
@@ -113,8 +138,11 @@ func (r *DevicePoolReconciler) activeDevicesByClass(ctx context.Context, pool *f
 	return byClass, nil
 }
 
-func (r *DevicePoolReconciler) createDevice(ctx context.Context, pool *farmv1alpha1.DevicePool, dc *farmv1alpha1.DeviceClass) error {
-	dev := &farmv1alpha1.Device{
+// newPoolDevice builds (but does not create) a Device CR owned by the pool for
+// the given class. Shared by the DevicePool (warm) and DeviceLease (on-demand)
+// controllers so they label/own devices identically.
+func newPoolDevice(pool *farmv1alpha1.DevicePool, dc *farmv1alpha1.DeviceClass) *farmv1alpha1.Device {
+	return &farmv1alpha1.Device{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: fmt.Sprintf("%s-%s-", pool.Name, dc.Name),
 			Namespace:    pool.Namespace,
@@ -129,6 +157,10 @@ func (r *DevicePoolReconciler) createDevice(ctx context.Context, pool *farmv1alp
 			ProviderType: dc.Spec.ProviderType,
 		},
 	}
+}
+
+func (r *DevicePoolReconciler) createDevice(ctx context.Context, pool *farmv1alpha1.DevicePool, dc *farmv1alpha1.DeviceClass) error {
+	dev := newPoolDevice(pool, dc)
 	if err := ctrl.SetControllerReference(pool, dev, r.Scheme); err != nil {
 		return err
 	}
@@ -189,11 +221,26 @@ func computeCounts(classes []farmv1alpha1.PoolClass, devices []farmv1alpha1.Devi
 	return out
 }
 
+// poolsForLease enqueues pools in a lease's namespace so capacity reservation
+// reacts promptly to new/changed leases.
+func (r *DevicePoolReconciler) poolsForLease(ctx context.Context, obj client.Object) []ctrl.Request {
+	var list farmv1alpha1.DevicePoolList
+	if err := r.List(ctx, &list, client.InNamespace(obj.GetNamespace())); err != nil {
+		return nil
+	}
+	reqs := make([]ctrl.Request, 0, len(list.Items))
+	for i := range list.Items {
+		reqs = append(reqs, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&list.Items[i])})
+	}
+	return reqs
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *DevicePoolReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&farmv1alpha1.DevicePool{}).
 		Owns(&farmv1alpha1.Device{}).
+		Watches(&farmv1alpha1.DeviceLease{}, handler.EnqueueRequestsFromMapFunc(r.poolsForLease)).
 		Named("devicepool").
 		Complete(r)
 }

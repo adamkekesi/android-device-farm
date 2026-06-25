@@ -74,6 +74,11 @@ dir = "operator"
 depends = ["generate"]
 run = "go build -o bin/manager ./cmd"
 
+[tasks.client-build]
+description = "Build the farmctl lease client"
+dir = "client"
+run = "go build -o bin/farmctl ."
+
 [tasks.docker-build]
 dir = "operator"
 # --provenance=false keeps this a single-image (no attestation manifest list),

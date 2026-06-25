@@ -111,6 +111,15 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 
+	// leaseRef is the single binding signal: a Ready device that is bound shows as
+	// Leased. The DeviceLease controller owns leaseRef; this controller derives the
+	// phase from it so the two don't fight over device.status.phase.
+	if phase == farmv1alpha1.DeviceReady && device.Status.LeaseRef != "" {
+		phase = farmv1alpha1.DeviceLeased
+		reason = "Leased"
+		msg = "bound to lease " + device.Status.LeaseRef
+	}
+
 	return r.setPhase(ctx, &device, phase, adb, reason, msg)
 }
 
