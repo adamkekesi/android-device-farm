@@ -45,6 +45,11 @@ const (
 	adbServerPort = "5037"
 	// adbClientImage carries an adb client for the registration Job.
 	adbClientImage = "devicefarmer/adb:latest"
+	// adbProxyPort is the pod-network port a socat sidecar re-exposes the
+	// emulator's localhost-only adb port on.
+	adbProxyPort int32 = 5556
+	// socatImage is the TCP-forwarder sidecar image.
+	socatImage = "alpine/socat:latest"
 )
 
 // DeviceReconciler reconciles a Device object: it backs each Device with an
@@ -166,7 +171,13 @@ func deviceSelector(d *farmv1alpha1.Device) map[string]string {
 
 func (r *DeviceReconciler) ensureService(ctx context.Context, device *farmv1alpha1.Device) error {
 	key := client.ObjectKey{Name: adbServiceName(device), Namespace: device.Namespace}
-	if err := r.Get(ctx, key, &corev1.Service{}); err == nil {
+	var existing corev1.Service
+	if err := r.Get(ctx, key, &existing); err == nil {
+		// Reconcile the target port (e.g. after an operator upgrade changed it).
+		if len(existing.Spec.Ports) == 1 && existing.Spec.Ports[0].TargetPort != intstr.FromInt32(adbProxyPort) {
+			existing.Spec.Ports[0].TargetPort = intstr.FromInt32(adbProxyPort)
+			return r.Update(ctx, &existing)
+		}
 		return nil
 	} else if !apierrors.IsNotFound(err) {
 		return err
@@ -182,7 +193,7 @@ func (r *DeviceReconciler) ensureService(ctx context.Context, device *farmv1alph
 			Ports: []corev1.ServicePort{{
 				Name:       "adb",
 				Port:       adbPort,
-				TargetPort: intstr.FromInt32(adbPort),
+				TargetPort: intstr.FromInt32(adbProxyPort),
 			}},
 		},
 	}
@@ -240,6 +251,16 @@ func (r *DeviceReconciler) buildPod(device *farmv1alpha1.Device, dc *farmv1alpha
 					Privileged: &privileged,
 				},
 				VolumeMounts: []corev1.VolumeMount{{Name: "kvm", MountPath: kvmHostPath}},
+			}, {
+				// Re-exposes the emulator's localhost-only adb port on the pod
+				// network so STF's adb server can `adb connect` to it.
+				Name:  "adb-proxy",
+				Image: socatImage,
+				Args: []string{
+					fmt.Sprintf("tcp-listen:%d,fork,reuseaddr", adbProxyPort),
+					fmt.Sprintf("tcp:127.0.0.1:%d", adbPort),
+				},
+				Ports: []corev1.ContainerPort{{Name: "adb", ContainerPort: adbProxyPort}},
 			}},
 			Volumes: []corev1.Volume{{
 				Name: "kvm",

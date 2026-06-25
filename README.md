@@ -106,7 +106,7 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   markers, defaults, and printer columns. Verified on kind: CRDs install, samples
   round-trip, defaulting applies, and invalid input is rejected. Reconcilers come
   in Phases 3–5.
-- **Phase 3 — emulator provisioning & warm pool:** in progress. Increment 1 (the
+- **Phase 3 — emulator provisioning & warm pool:** done. Increment 1 (the
   `DevicePool` warm-pool reconciler in `operator/internal/controller`) is done and
   envtest-verified (84.8% pkg coverage): it provisions `minWarm` `Device`s per
   class, recreates them on deletion, reports per-class status + a `Ready` condition,
@@ -119,7 +119,10 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   adds STF's `adb` server + `provider` (verified live — the provider runs, has the
   adb client, connects to the dev triproxy, and is "Tracking devices"), and the
   operator `adb connect`s each Ready device to the adb server (envtest-verified Job
-  creation). **Remaining:** a live Android-emulator boot on a KVM cluster to watch
-  a device register end-to-end (the heavy verification deferred earlier).
+  creation). **Verified live on kind:** a real Android emulator boots with KVM
+  (~31s boot), the Device goes `Ready`, the operator connects it (via a socat
+  sidecar that re-exposes the emulator's localhost-only adb on the pod network),
+  and the STF provider reports it `Fully operational` — i.e. it appears in STF and
+  is controllable.
 
 See the implementation plan for the phase breakdown and acceptance criteria.
