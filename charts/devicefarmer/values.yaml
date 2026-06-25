@@ -1,0 +1,52 @@
+# DeviceFarmer (STF) control-plane values.
+#
+# Phase 1 scaffold. The chart templates are not implemented yet — this file
+# documents the value surface the plan calls for (image tags, replica counts,
+# RethinkDB persistence, auth provider, ingress host, TLS). See
+# docs/IMPLEMENTATION_PLAN.md §6 Phase 1.
+
+# Use the maintained devicefarmer/* images, NOT the abandoned openstf/* ones.
+image:
+  repository: devicefarmer/stf
+  tag: "3.7.2"
+  pullPolicy: IfNotPresent
+
+# STF is a set of cooperating processes; each becomes its own Deployment.
+# Replica counts per component (filled in during Phase 1).
+replicas:
+  app: 1
+  auth: 1
+  api: 1
+  websocket: 1
+  processor: 1
+  triproxyApp: 1
+  triproxyDev: 1
+  reaper: 1
+  storagePlugin: 1
+
+rethinkdb:
+  image: rethinkdb:2.4
+  # RethinkDB is a StatefulSet with a PVC (managed dependency of STF).
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+
+# Schema migration runs as a Helm pre-install/upgrade hook Job and seeds the
+# default admin + root group on first migrate.
+migrate:
+  enabled: true
+
+# Start with STF's built-in mock auth; swap for oauth/saml later.
+auth:
+  provider: mock
+
+ingress:
+  enabled: true
+  # Gateway API if available on the target cluster, otherwise ingress-nginx.
+  # Do NOT introduce Traefik v1 CRDs.
+  className: ""
+  host: stf.local
+  tls:
+    enabled: false
+    secretName: ""

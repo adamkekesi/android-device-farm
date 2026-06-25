@@ -1,0 +1,143 @@
+# Android Device Farm — pinned toolchain and tasks.
+#
+# New contributors: `mise install` provisions the exact toolchain below, then
+# `mise tasks` lists every repeatable command. There is no Makefile, .nvmrc, or
+# separate tool-version file to keep in sync. (Kubebuilder scaffolds a Makefile
+# under operator/ — it is kept temporarily and will be retired in favour of these
+# tasks; see docs/IMPLEMENTATION_PLAN.md §2.)
+#
+# Versions verified against `mise latest <tool>` on 2026-06-25. Re-verify the
+# current stable release of each before bumping.
+
+[tools]
+go = "1.26"
+helm = "3"                 # plan: move to 4 once cluster tooling supports it
+kubectl = "1.36"
+kind = "0.32"
+kustomize = "5"
+golangci-lint = "2.12.2"
+"ubi:kubernetes-sigs/kubebuilder" = "4.15.0"
+"go:sigs.k8s.io/controller-tools/cmd/controller-gen" = "latest"
+"go:sigs.k8s.io/controller-runtime/tools/setup-envtest" = "latest"
+
+[env]
+IMG = "ghcr.io/adamkekesi/devicefarm-operator:dev"
+KIND_CLUSTER = "devicefarm"
+# Verify an available assets version with `setup-envtest list` before bumping.
+ENVTEST_K8S_VERSION = "1.31"
+
+# --- Operator: codegen ------------------------------------------------------
+
+[tasks.generate]
+description = "controller-gen: deepcopy, RBAC, and CRD manifests"
+dir = "operator"
+run = [
+  "controller-gen object:headerFile=hack/boilerplate.go.txt paths=./...",
+  "controller-gen rbac:roleName=manager-role crd webhook paths=./... output:crd:artifacts:config=config/crd/bases",
+]
+sources = ["api/**/*.go", "internal/controller/**/*.go"]
+outputs = ["config/crd/bases/**/*.yaml"]
+
+[tasks.manifests]
+description = "Alias kept for familiarity with kubebuilder"
+depends = ["generate"]
+
+# --- Operator: quality ------------------------------------------------------
+
+[tasks.fmt]
+dir = "operator"
+run = "go fmt ./..."
+
+[tasks.vet]
+dir = "operator"
+run = "go vet ./..."
+
+[tasks.lint]
+dir = "operator"
+run = "golangci-lint run"
+
+[tasks.test]
+description = "Unit and envtest controller tests"
+dir = "operator"
+depends = ["generate"]
+run = [
+  "setup-envtest use {{env.ENVTEST_K8S_VERSION}} --bin-dir bin",
+  "KUBEBUILDER_ASSETS=$(setup-envtest use -i -p path {{env.ENVTEST_K8S_VERSION}} --bin-dir bin) go test ./... -coverprofile cover.out",
+]
+sources = ["operator/**/*.go"]
+
+# --- Operator: build & images ----------------------------------------------
+
+[tasks.build]
+dir = "operator"
+depends = ["generate"]
+run = "go build -o bin/manager ./cmd"
+
+[tasks.docker-build]
+dir = "operator"
+# --provenance=false keeps this a single-image (no attestation manifest list),
+# which is what kind can load. Drop it only if you push multi-arch to a registry.
+run = "docker build --provenance=false -t {{env.IMG}} ."
+
+[tasks.docker-push]
+dir = "operator"
+run = "docker push {{env.IMG}}"
+
+# --- Operator: cluster deploy ----------------------------------------------
+
+[tasks.install]
+description = "Install CRDs into the current cluster"
+dir = "operator"
+depends = ["generate"]
+run = "kubectl apply -k config/crd"
+
+[tasks.deploy]
+description = "Deploy the operator into the current cluster"
+dir = "operator"
+depends = ["generate"]
+run = [
+  "cd config/manager && kustomize edit set image controller={{env.IMG}}",
+  "kubectl apply -k config/default",
+]
+
+# --- Local kind cluster -----------------------------------------------------
+
+[tasks.kind-up]
+description = "Create a kind cluster with KVM passthrough"
+run = "./hack/kind-up.sh {{env.KIND_CLUSTER}}"
+
+[tasks.kind-down]
+run = "kind delete cluster --name {{env.KIND_CLUSTER}}"
+
+[tasks.kind-load]
+description = "Load the operator image into kind"
+depends = ["docker-build"]
+# Load via a docker-save archive rather than `kind load docker-image`. The latter
+# fails ("failed to detect containerd snapshotter") when the Docker daemon uses
+# the containerd image store; the archive path is robust either way.
+run = [
+  "mkdir -p bin",
+  "docker save {{env.IMG}} -o bin/operator-image.tar",
+  "kind load image-archive bin/operator-image.tar --name {{env.KIND_CLUSTER}}",
+]
+
+# --- DeviceFarmer control-plane chart --------------------------------------
+
+[tasks.chart-lint]
+dir = "charts/devicefarmer"
+run = "helm lint ."
+
+[tasks.chart-template]
+dir = "charts/devicefarmer"
+run = "helm template devicefarmer ."
+
+[tasks.chart-install]
+description = "Install the DeviceFarmer control-plane chart"
+dir = "charts/devicefarmer"
+run = "helm upgrade --install devicefarmer . -n devicefarmer --create-namespace"
+
+# --- Composite --------------------------------------------------------------
+
+[tasks.dev]
+description = "Full local loop: cluster, chart, build, load, deploy"
+depends = ["kind-up", "chart-install", "kind-load", "deploy"]

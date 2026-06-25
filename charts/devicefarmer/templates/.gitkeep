@@ -1,0 +1,3 @@
+# Phase 1 deliverable: STF component templates go here.
+# Each STF process -> a Deployment; RethinkDB -> a StatefulSet + PVC;
+# schema migration -> a Helm pre-install/upgrade hook Job; ingress in front.

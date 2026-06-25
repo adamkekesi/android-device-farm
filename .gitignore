@@ -1,0 +1,23 @@
+# Build output
+bin/
+operator/bin/
+dist/
+*.test
+*.out
+cover.out
+
+# Go
+vendor/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Local env overrides
+.env
+*.local
+
+# mise local state (keep .mise.toml tracked)
+.mise.local.toml

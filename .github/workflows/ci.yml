@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Installs the exact toolchain pinned in .mise.toml and caches it.
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+
+      - name: Lint
+        run: mise run lint
+
+      - name: Test
+        run: mise run test
+
+      - name: Build operator image
+        run: mise run docker-build
+
+  # Phase 0 refinement: build the operator image multi-arch on a distroless base
+  # (kubebuilder's scaffolded Dockerfile already uses gcr.io/distroless/static) and
+  # push to GHCR on tagged releases. Wire up docker/build-push-action + buildx here.
