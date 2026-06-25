@@ -130,6 +130,13 @@ See `docs/IMPLEMENTATION_PLAN.md` §5 for the full API design.
   on-demand up to `maxConcurrent`, and evicts an idle device of another class (LRU)
   to serve a new type at capacity — the DevicePool reserves capacity for pending
   leases so warm provisioning yields to demand. A `farmctl` client (`client/`)
-  provides acquire/heartbeat/release. envtest-verified (16 specs, ~83% coverage).
+  provides acquire/heartbeat/release. envtest-verified (16 specs, ~83% coverage),
+  and verified live on kind (a lease bound the running emulator, device → Leased).
+- **Phase 5 — failure handling & recovery:** done. The Device controller detects
+  crash-loops (restart threshold / `CrashLoopBackOff`), pod failures, and post-boot
+  wedges (a Ready device going unready), marks the device `Failed`, and recreates
+  its pod with capped exponential backoff — surfacing the reason in a `Ready`
+  condition. Bound leases publish a `DeviceHealthy` condition so a holder whose
+  device fails gets actionable status while the device self-heals. envtest-verified.
 
 See the implementation plan for the phase breakdown and acceptance criteria.

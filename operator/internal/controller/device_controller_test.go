@@ -191,6 +191,54 @@ var _ = Describe("Device controller", func() {
 		Expect(cmd).To(ContainElement("devicefarmer-adb"))
 		Expect(cmd).To(ContainElement(regName + "-adb." + namespace + ".svc.cluster.local:5555"))
 	})
+
+	It("recreates a crash-looping device and records a failure for backoff", func() {
+		d := &farmv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: deviceName, Namespace: namespace}}
+		var first *corev1.Pod
+		Eventually(func() error { var e error; first, e = getPod(d); return e }, timeout, interval).Should(Succeed())
+
+		first.Status.ContainerStatuses = []corev1.ContainerStatus{{
+			Name:         "emulator",
+			RestartCount: 5,
+			State:        corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+		}}
+		Expect(k8sClient.Status().Update(ctx, first)).To(Succeed())
+
+		By("recreating the pod")
+		Eventually(func() bool {
+			p, err := getPod(d)
+			return err == nil && p.UID != first.UID
+		}, timeout, interval).Should(BeTrue())
+
+		By("recording a failure count for backoff")
+		Eventually(func() string {
+			var dd farmv1alpha1.Device
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: deviceName, Namespace: namespace}, &dd)
+			return dd.Annotations[annFailures]
+		}, timeout, interval).ShouldNot(BeEmpty())
+	})
+
+	It("recreates a wedged device that had previously booted", func() {
+		d := &farmv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: deviceName, Namespace: namespace}}
+		var first *corev1.Pod
+		Eventually(func() error { var e error; first, e = getPod(d); return e }, timeout, interval).Should(Succeed())
+
+		// Boot it.
+		first.Status.Phase = corev1.PodRunning
+		first.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+		Expect(k8sClient.Status().Update(ctx, first)).To(Succeed())
+		Eventually(func() farmv1alpha1.DevicePhase { return getDevice().Status.Phase }, timeout, interval).Should(Equal(farmv1alpha1.DeviceReady))
+
+		// Wedge it: unready after having booted.
+		p, _ := getPod(d)
+		p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}
+		Expect(k8sClient.Status().Update(ctx, p)).To(Succeed())
+
+		Eventually(func() bool {
+			np, err := getPod(d)
+			return err == nil && np.UID != first.UID
+		}, timeout, interval).Should(BeTrue())
+	})
 })
 
 // uuidish returns a short unique-ish suffix so parallel specs don't collide.

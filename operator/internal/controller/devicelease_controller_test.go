@@ -131,6 +131,15 @@ var _ = Describe("DeviceLease controller", func() {
 			_ = k8sClient.Get(ctx, client.ObjectKey{Name: l.Status.DeviceRef, Namespace: namespace}, &dd)
 			return dd.Status.Phase
 		}, timeout, interval).Should(Equal(farmv1alpha1.DeviceLeased))
+
+		By("publishing a DeviceHealthy condition")
+		Eventually(func() metav1.ConditionStatus {
+			c := findCondition(getLease("l1").Status.Conditions, "DeviceHealthy")
+			if c == nil {
+				return ""
+			}
+			return c.Status
+		}, timeout, interval).Should(Equal(metav1.ConditionTrue))
 	})
 
 	It("never double-binds: 3 leases over 2 devices bind exactly 2 distinct devices", func() {

@@ -153,14 +153,48 @@ func (r *DeviceLeaseReconciler) reconcileBound(ctx context.Context, lease *farmv
 			"lease expired without a heartbeat; device recycled")
 	}
 
+	// Reflect the bound device's health so the holder has actionable status if its
+	// device fails (the device controller recovers it; the lease stays bound).
+	healthy, hReason, hMsg := r.deviceHealth(ctx, lease)
+	healthChanged := meta.SetStatusCondition(&lease.Status.Conditions, metav1.Condition{
+		Type:               "DeviceHealthy",
+		Status:             boolCondition(healthy),
+		ObservedGeneration: lease.Generation,
+		Reason:             hReason,
+		Message:            hMsg,
+	})
+
 	et := metav1.NewTime(expires)
-	if lease.Status.ExpiresAt == nil || !lease.Status.ExpiresAt.Equal(&et) {
-		lease.Status.ExpiresAt = &et
-		if err := r.writeStatus(ctx, lease, farmv1alpha1.LeaseBound, "Heartbeat", "lease refreshed"); err != nil {
+	expiryChanged := lease.Status.ExpiresAt == nil || !lease.Status.ExpiresAt.Equal(&et)
+	lease.Status.ExpiresAt = &et
+	if healthChanged || expiryChanged {
+		if err := r.writeStatus(ctx, lease, farmv1alpha1.LeaseBound, "Heartbeat", "lease active"); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 	return ctrl.Result{RequeueAfter: time.Until(expires)}, nil
+}
+
+// deviceHealth reports whether the lease's bound device is healthy.
+func (r *DeviceLeaseReconciler) deviceHealth(ctx context.Context, lease *farmv1alpha1.DeviceLease) (bool, string, string) {
+	if lease.Status.DeviceRef == "" {
+		return false, "NoDevice", "no device bound"
+	}
+	var dev farmv1alpha1.Device
+	if err := r.Get(ctx, client.ObjectKey{Name: lease.Status.DeviceRef, Namespace: lease.Namespace}, &dev); err != nil {
+		return false, "DeviceMissing", "bound device "+lease.Status.DeviceRef+" not found"
+	}
+	if dev.Status.Phase == farmv1alpha1.DeviceFailed {
+		return false, "DeviceFailed", "bound device is failed and being recovered"
+	}
+	return true, "Healthy", "bound device is healthy"
+}
+
+func boolCondition(b bool) metav1.ConditionStatus {
+	if b {
+		return metav1.ConditionTrue
+	}
+	return metav1.ConditionFalse
 }
 
 // releaseDevice clears the bound device's leaseRef and recycles it (deletes the
@@ -422,7 +456,9 @@ func (r *DeviceLeaseReconciler) leasesForDevice(ctx context.Context, obj client.
 	var reqs []ctrl.Request
 	for i := range list.Items {
 		l := &list.Items[i]
-		if l.Status.Phase == "" || l.Status.Phase == farmv1alpha1.LeasePending {
+		// Pending leases may now bind; the lease bound to this device reflects its
+		// health.
+		if l.Status.Phase == "" || l.Status.Phase == farmv1alpha1.LeasePending || l.Status.DeviceRef == obj.GetName() {
 			reqs = append(reqs, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(l)})
 		}
 	}

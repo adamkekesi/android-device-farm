@@ -90,7 +90,7 @@ type DeviceLeaseStatus struct {
 // +kubebuilder:printcolumn:name="Class",type=string,JSONPath=`.spec.classRef`
 // +kubebuilder:printcolumn:name="Device",type=string,JSONPath=`.status.deviceRef`
 // +kubebuilder:printcolumn:name="Requester",type=string,JSONPath=`.spec.requester`
-// +kubebuilder:printcolumn:name="Expires",type=date,JSONPath=`.status.expiresAt`
+// +kubebuilder:printcolumn:name="Expires",type=string,JSONPath=`.status.expiresAt`
 
 // DeviceLease is the Schema for the deviceleases API
 type DeviceLease struct {

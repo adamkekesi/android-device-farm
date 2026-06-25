@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -50,6 +52,18 @@ const (
 	adbProxyPort int32 = 5556
 	// socatImage is the TCP-forwarder sidecar image.
 	socatImage = "alpine/socat:latest"
+
+	// crashLoopRestartThreshold marks a device Failed once its container has
+	// restarted this many times.
+	crashLoopRestartThreshold int32 = 3
+	// Exponential backoff bounds for recreating a failed device.
+	recreateBackoffBase = 10 * time.Second
+	recreateBackoffMax  = 5 * time.Minute
+
+	// Recovery bookkeeping annotations.
+	annBooted    = "farm.example.com/booted"          // device has been Ready at least once
+	annFailures  = "farm.example.com/recreate-attempts" // consecutive recreate count (backoff)
+	annNextRetry = "farm.example.com/next-retry"       // earliest next recreate time (RFC3339)
 )
 
 // DeviceReconciler reconciles a Device object: it backs each Device with an
@@ -100,27 +114,119 @@ func (r *DeviceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
-	phase, reason, msg := phaseForPod(pod)
+	booted := device.Annotations[annBooted] == "true"
+	phase, reason, msg := computePhase(pod, booted)
 	adb := fmt.Sprintf("%s.%s.svc.cluster.local:%d", adbServiceName(&device), device.Namespace, adbPort)
 
-	// Once the emulator is up, register it into STF by connecting its adb endpoint
-	// to STF's adb server (the provider then picks it up).
-	if phase == farmv1alpha1.DeviceReady {
+	switch phase {
+	case farmv1alpha1.DeviceFailed:
+		// Crash-loop, pod failure, or a post-boot wedge: recreate the pod with
+		// exponential backoff so a bad image/node doesn't thrash.
+		res, err := r.recoverFailed(ctx, &device, pod)
+		if err != nil {
+			return res, err
+		}
+		if _, err := r.setPhase(ctx, &device, farmv1alpha1.DeviceFailed, adb, reason, msg); err != nil {
+			return res, err
+		}
+		return res, nil
+
+	case farmv1alpha1.DeviceReady:
+		// Once the emulator is up, register it into STF (the provider picks it up).
 		if err := r.ensureRegistration(ctx, &device, adb); err != nil {
+			return ctrl.Result{}, err
+		}
+		// Mark booted and clear any recovery backoff now that it's healthy.
+		if err := r.markHealthy(ctx, &device); err != nil {
+			return ctrl.Result{}, err
+		}
+		// leaseRef is the single binding signal: a Ready device that is bound shows
+		// as Leased. The DeviceLease controller owns leaseRef; this controller
+		// derives the phase from it so the two don't fight over device.status.phase.
+		if device.Status.LeaseRef != "" {
+			phase = farmv1alpha1.DeviceLeased
+			reason = "Leased"
+			msg = "bound to lease " + device.Status.LeaseRef
+		}
+		return r.setPhase(ctx, &device, phase, adb, reason, msg)
+
+	default: // Provisioning
+		return r.setPhase(ctx, &device, phase, adb, reason, msg)
+	}
+}
+
+// recoverFailed recreates a failed device's pod with exponential backoff.
+func (r *DeviceReconciler) recoverFailed(ctx context.Context, device *farmv1alpha1.Device, pod *corev1.Pod) (ctrl.Result, error) {
+	now := time.Now()
+	if t := annTime(device, annNextRetry); !t.IsZero() && now.Before(t) {
+		return ctrl.Result{RequeueAfter: t.Sub(now)}, nil
+	}
+	failures := annInt(device, annFailures)
+
+	if pod != nil && pod.Name != "" && pod.DeletionTimestamp == nil {
+		if err := r.Delete(ctx, pod); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
 	}
 
-	// leaseRef is the single binding signal: a Ready device that is bound shows as
-	// Leased. The DeviceLease controller owns leaseRef; this controller derives the
-	// phase from it so the two don't fight over device.status.phase.
-	if phase == farmv1alpha1.DeviceReady && device.Status.LeaseRef != "" {
-		phase = farmv1alpha1.DeviceLeased
-		reason = "Leased"
-		msg = "bound to lease " + device.Status.LeaseRef
+	backoff := backoffDuration(failures)
+	if device.Annotations == nil {
+		device.Annotations = map[string]string{}
 	}
+	device.Annotations[annFailures] = strconv.Itoa(failures + 1)
+	device.Annotations[annNextRetry] = now.Add(backoff).Format(time.RFC3339)
+	delete(device.Annotations, annBooted) // the recreated pod is "still booting" again
+	if err := r.Update(ctx, device); err != nil {
+		return ctrl.Result{}, err
+	}
+	logf.FromContext(ctx).Info("recreating failed device",
+		"device", device.Name, "attempt", failures+1, "backoff", backoff.String())
+	return ctrl.Result{RequeueAfter: backoff}, nil
+}
 
-	return r.setPhase(ctx, &device, phase, adb, reason, msg)
+// markHealthy stamps the booted annotation and clears recovery backoff.
+func (r *DeviceReconciler) markHealthy(ctx context.Context, device *farmv1alpha1.Device) error {
+	if device.Annotations == nil {
+		device.Annotations = map[string]string{}
+	}
+	changed := device.Annotations[annBooted] != "true"
+	device.Annotations[annBooted] = "true"
+	for _, k := range []string{annFailures, annNextRetry} {
+		if _, ok := device.Annotations[k]; ok {
+			delete(device.Annotations, k)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return r.Update(ctx, device)
+}
+
+func backoffDuration(failures int) time.Duration {
+	d := recreateBackoffBase << failures
+	if d <= 0 || d > recreateBackoffMax {
+		return recreateBackoffMax
+	}
+	return d
+}
+
+func annInt(device *farmv1alpha1.Device, key string) int {
+	if v, ok := device.Annotations[key]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+func annTime(device *farmv1alpha1.Device, key string) time.Time {
+	if v, ok := device.Annotations[key]; ok {
+		if t, err := time.Parse(time.RFC3339, v); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // ensureRegistration creates an idempotent Job that `adb connect`s the device to
@@ -295,20 +401,46 @@ func defaultBootCompletedProbe() *corev1.Probe {
 	}
 }
 
-// phaseForPod maps a Pod's state to a Device phase.
-func phaseForPod(pod *corev1.Pod) (farmv1alpha1.DevicePhase, string, string) {
+// computePhase maps a Pod's state (plus whether the device booted before) to a
+// Device phase. A pod that is unready after having booted is treated as wedged.
+func computePhase(pod *corev1.Pod, booted bool) (farmv1alpha1.DevicePhase, string, string) {
+	if reason := crashLoopReason(pod); reason != "" {
+		return farmv1alpha1.DeviceFailed, "CrashLoopBackOff", reason
+	}
 	switch pod.Status.Phase {
 	case corev1.PodFailed:
 		return farmv1alpha1.DeviceFailed, "PodFailed", "emulator pod failed"
 	case corev1.PodSucceeded:
 		return farmv1alpha1.DeviceFailed, "PodExited", "emulator pod exited unexpectedly"
 	}
-	for _, c := range pod.Status.Conditions {
-		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
-			return farmv1alpha1.DeviceReady, "BootCompleted", "emulator booted and ready"
-		}
+	if podReady(pod) {
+		return farmv1alpha1.DeviceReady, "BootCompleted", "emulator booted and ready"
+	}
+	if booted {
+		return farmv1alpha1.DeviceFailed, "Wedged", "emulator became unresponsive after boot"
 	}
 	return farmv1alpha1.DeviceProvisioning, "Provisioning", "waiting for emulator to boot"
+}
+
+func podReady(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
+func crashLoopReason(pod *corev1.Pod) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.State.Waiting != nil && cs.State.Waiting.Reason == "CrashLoopBackOff" {
+			return fmt.Sprintf("container %s is crash-looping", cs.Name)
+		}
+		if cs.RestartCount >= crashLoopRestartThreshold {
+			return fmt.Sprintf("container %s restarted %d times", cs.Name, cs.RestartCount)
+		}
+	}
+	return ""
 }
 
 func (r *DeviceReconciler) setPhase(ctx context.Context, device *farmv1alpha1.Device, phase farmv1alpha1.DevicePhase, adb, reason, msg string) (ctrl.Result, error) {
