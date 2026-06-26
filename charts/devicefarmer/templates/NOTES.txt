@@ -13,13 +13,10 @@ storage-image. Schema migration ran as a post-install Job.
    {{ include "devicefarmer.publicUrl" . }}/
 
 {{- if .Values.ingress.enabled }}
-   The Ingress host is "{{ .Values.ingress.host }}" (class: {{ .Values.ingress.className | default "default" }}).
-   For local kind testing, point that host at your ingress controller, e.g.:
-
-     echo "127.0.0.1 {{ .Values.ingress.host }}" | sudo tee -a /etc/hosts
-
-   (with the ingress controller reachable on 127.0.0.1, e.g. via port-forward or
-   kind extraPortMappings).
+   Ingress host "{{ .Values.ingress.host }}" (class: {{ .Values.ingress.className | default "default" }}).
+   On local kind, `mise run kind-up` publishes the ingress on host port 8080, so
+   the URL above works directly. If you set a custom host (not localhost), add it
+   to /etc/hosts pointing at the ingress, or use the kind node IP.
 {{- end }}
 
 3. Log in with the mock auth provider using the seeded admin account:

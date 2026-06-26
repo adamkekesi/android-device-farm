@@ -64,8 +64,20 @@ Public URLs (driven by the ingress host + TLS toggle)
 */}}
 {{- define "devicefarmer.scheme" -}}{{- if .Values.ingress.tls.enabled -}}https{{- else -}}http{{- end -}}{{- end -}}
 {{- define "devicefarmer.wsScheme" -}}{{- if .Values.ingress.tls.enabled -}}wss{{- else -}}ws{{- end -}}{{- end -}}
-{{- define "devicefarmer.publicUrl" -}}{{- printf "%s://%s" (include "devicefarmer.scheme" .) .Values.ingress.host -}}{{- end -}}
-{{- define "devicefarmer.wsUrl" -}}{{- printf "%s://%s" (include "devicefarmer.wsScheme" .) .Values.ingress.host -}}{{- end -}}
+{{/* publicUrl is how browsers/clients reach STF. ingress.externalURL (which may
+include a port, e.g. http://localhost:8080) wins; otherwise scheme://host. */}}
+{{- define "devicefarmer.publicUrl" -}}
+{{- if .Values.ingress.externalURL -}}
+{{- .Values.ingress.externalURL | trimSuffix "/" -}}
+{{- else -}}
+{{- printf "%s://%s" (include "devicefarmer.scheme" .) .Values.ingress.host -}}
+{{- end -}}
+{{- end -}}
+{{- define "devicefarmer.wsUrl" -}}
+{{- $u := include "devicefarmer.publicUrl" . -}}
+{{- if hasPrefix "https://" $u -}}{{ printf "wss://%s" (trimPrefix "https://" $u) }}
+{{- else -}}{{ printf "ws://%s" (trimPrefix "http://" $u) }}{{- end -}}
+{{- end -}}
 
 {{/*
 Reusable env snippets

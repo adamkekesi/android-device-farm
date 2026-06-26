@@ -18,10 +18,18 @@ passed through and the KVM label set.
 ## Deploy
 
 ```bash
-mise run chart-install          # DeviceFarmer (STF) control plane
 mise run install                # install CRDs
 mise run docker-build && mise run kind-load && mise run deploy   # operator
+
+# DeviceFarmer (STF). On local kind, kind-up publishes the ingress on host :8080,
+# so expose STF at http://localhost:8080 (no port-forward, no /etc/hosts):
+helm upgrade --install devicefarmer charts/devicefarmer -n devicefarmer --create-namespace \
+  --set ingress.host=localhost --set ingress.externalURL=http://localhost:8080
 ```
+
+The UI is then at **http://localhost:8080/** (mock login: the seeded admin). For a
+real DNS host, set `ingress.host`/`ingress.externalURL` accordingly and point DNS
+at the ingress. `mise run chart-install` uses the chart default host (`stf.local`).
 
 ## Scaling the warm pool
 

@@ -14,6 +14,11 @@ set -euo pipefail
 
 CLUSTER="${1:-devicefarm}"
 KVM_NODE_LABEL="farm.example.com/kvm=true"
+# Host ports published to the ingress controller (node :80/:443), so STF is
+# reachable at http://localhost:${INGRESS_HTTP_PORT}/ with no port-forward. These
+# avoid 80/443 (often taken by other local clusters); override as needed.
+INGRESS_HTTP_PORT="${INGRESS_HTTP_PORT:-8080}"
+INGRESS_HTTPS_PORT="${INGRESS_HTTPS_PORT:-8443}"
 # Pinned to kind v0.32.0's primary node image (use the @sha256 digest, as kind
 # requires, to guarantee an image built for this kind release). Override with
 # KIND_NODE_IMAGE if needed.
@@ -44,6 +49,10 @@ nodes:
   - role: control-plane
     labels:
       farm.example.com/kvm: "true"
+      ingress-ready: "true"   # lets ingress-nginx (kind manifest) schedule here
+    extraPortMappings:
+      - { containerPort: 80, hostPort: ${INGRESS_HTTP_PORT}, protocol: TCP }
+      - { containerPort: 443, hostPort: ${INGRESS_HTTPS_PORT}, protocol: TCP }
     extraMounts:
       - hostPath: /dev/kvm
         containerPath: /dev/kvm

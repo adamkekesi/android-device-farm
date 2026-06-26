@@ -110,7 +110,12 @@ ingress:
   # Gateway API if available on the target cluster, otherwise ingress-nginx.
   # Do NOT introduce Traefik v1 CRDs.
   className: "nginx"
+  # host is the Ingress routing host (Host header match). For local kind with a
+  # published port, set host: localhost and externalURL: http://localhost:8080.
   host: stf.local
+  # externalURL overrides the public URL STF advertises (login/websocket/storage);
+  # set it when the access URL includes a port. Empty = derive from scheme+host.
+  externalURL: ""
   annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: "1024m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
