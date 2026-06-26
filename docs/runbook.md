@@ -31,6 +31,11 @@ The UI is then at **http://localhost:8080/** (mock login: the seeded admin). For
 real DNS host, set `ingress.host`/`ingress.externalURL` accordingly and point DNS
 at the ingress. `mise run chart-install` uses the chart default host (`stf.local`).
 
+**In-browser device screen/control** works because `revProxy.enabled` (default)
+puts an nginx reverse proxy in front that routes STF's dynamic per-device screen
+WebSocket (`/d/<provider>/<serial>/<port>/`) to the provider — something a plain
+Ingress can't do. Open a Ready device in the STF UI to mirror and control it.
+
 ## Scaling the warm pool
 
 Edit the `DevicePool`:

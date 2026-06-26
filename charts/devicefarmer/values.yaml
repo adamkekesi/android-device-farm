@@ -105,6 +105,20 @@ physicalProvider:
   adbHostOverride: ""
   resources: {}
 
+# Reverse proxy (STF's nginx model). Fronts all STF routing INCLUDING the dynamic
+# per-device screen/input WebSockets (/d/<provider>/<serial>/<port>/) needed for
+# in-browser device control — which a plain Ingress cannot route. When enabled,
+# the Ingress points at this proxy instead of doing per-path routing itself.
+revProxy:
+  enabled: true
+  image:
+    repository: nginx
+    tag: "1.27-alpine"
+    pullPolicy: IfNotPresent
+  # Cluster DNS IP for nginx's resolver (kube-dns/coredns). kind default below.
+  dnsResolver: "10.96.0.10"
+  resources: {}
+
 ingress:
   enabled: true
   # Gateway API if available on the target cluster, otherwise ingress-nginx.

@@ -20,10 +20,21 @@ spec:
   rules:
     - host: {{ .Values.ingress.host | quote }}
       http:
-        # Order mirrors STF's nginx: most-specific storage paths first, then
-        # socket.io (websocket), auth, api, and the app as the catch-all.
-        # pathType Prefix => ingress-nginx routes by longest matching prefix.
         paths:
+          {{- if .Values.revProxy.enabled }}
+          # The reverse proxy fronts all STF routing (incl. the dynamic per-device
+          # screen WebSocket /d/...), so the Ingress just sends everything to it.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "devicefarmer.fullname" . }}-revproxy
+                port: { number: 80 }
+          {{- else }}
+          # Order mirrors STF's nginx: most-specific storage paths first, then
+          # socket.io (websocket), auth, api, and the app as the catch-all.
+          # NOTE: this path-based routing cannot serve in-browser device screens
+          # (the /d/<provider>/<serial>/<port>/ dynamic port); enable revProxy for that.
           - path: /s/image/
             pathType: Prefix
             backend:
@@ -66,4 +77,5 @@ spec:
               service:
                 name: {{ include "devicefarmer.fullname" . }}-app
                 port: { number: 3000 }
+          {{- end }}
 {{- end }}

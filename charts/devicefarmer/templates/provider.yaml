@@ -1,4 +1,18 @@
 {{- if .Values.provider.enabled }}
+{{/* Headless Service: DNS resolves to the provider pod IP so the reverse proxy can
+reach the dynamic per-device screen/input ports directly (any port the provider
+listens on), which a normal ClusterIP Service couldn't forward. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-provider
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "provider") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "provider") | nindent 4 }}
+  ports:
+    - { name: minport, port: {{ .Values.provider.minPort }}, targetPort: {{ .Values.provider.minPort }} }
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
