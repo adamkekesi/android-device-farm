@@ -31,11 +31,28 @@ spec:
           imagePullPolicy: {{ .Values.adb.image.pullPolicy }}
           ports:
             - { name: adb, containerPort: 5037 }
+          {{- if .Values.adb.adbKeySecret }}
+          # Offer the farm adb key so the server authenticates to Play-certified
+          # (user-build) emulators, which enforce adb authorization.
+          env:
+            - { name: ADB_VENDOR_KEYS, value: /adbkeys/adbkey }
+          {{- end }}
           readinessProbe:
             tcpSocket: { port: 5037 }
             initialDelaySeconds: 5
             periodSeconds: 10
+          {{- if .Values.adb.adbKeySecret }}
+          volumeMounts:
+            - { name: adbkey, mountPath: /adbkeys, readOnly: true }
+          {{- end }}
           {{- with .Values.adb.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
+      {{- if .Values.adb.adbKeySecret }}
+      volumes:
+        - name: adbkey
+          secret:
+            secretName: {{ .Values.adb.adbKeySecret }}
+            defaultMode: 0600
+      {{- end }}
 {{- end }}

@@ -319,9 +319,19 @@ func (r *DeviceReconciler) ensureService(ctx context.Context, device *farmv1alph
 	key := client.ObjectKey{Name: adbServiceName(device), Namespace: device.Namespace}
 	var existing corev1.Service
 	if err := r.Get(ctx, key, &existing); err == nil {
-		// Reconcile the target port (e.g. after an operator upgrade changed it).
+		// Reconcile drift from older operator versions: the Service is NodePort so
+		// the host can reach adb at <nodeIP>:<nodePort> (the adb-registrar uses this
+		// to attach devices to the host's adb server), and the socat target port.
+		changed := false
+		if existing.Spec.Type != corev1.ServiceTypeNodePort {
+			existing.Spec.Type = corev1.ServiceTypeNodePort
+			changed = true
+		}
 		if len(existing.Spec.Ports) == 1 && existing.Spec.Ports[0].TargetPort != intstr.FromInt32(adbProxyPort) {
 			existing.Spec.Ports[0].TargetPort = intstr.FromInt32(adbProxyPort)
+			changed = true
+		}
+		if changed {
 			return r.Update(ctx, &existing)
 		}
 		return nil
@@ -335,6 +345,10 @@ func (r *DeviceReconciler) ensureService(ctx context.Context, device *farmv1alph
 			Labels:    deviceSelector(device),
 		},
 		Spec: corev1.ServiceSpec{
+			// NodePort: exposes adb on every node IP at an allocated high port, which
+			// the host can reach directly on the kind Docker network (no port-forward
+			// or host route). Keeps a ClusterIP too, so in-cluster DNS still works.
+			Type:     corev1.ServiceTypeNodePort,
 			Selector: deviceSelector(device),
 			Ports: []corev1.ServicePort{{
 				Name:       "adb",

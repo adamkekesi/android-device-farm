@@ -78,6 +78,12 @@ adb:
     repository: devicefarmer/adb
     tag: "latest"
     pullPolicy: IfNotPresent
+  # Name of a Secret holding `adbkey` (private) used to authenticate to
+  # Play-certified emulators that enforce adb auth. Empty = no key (fine for
+  # userdebug/AOSP images). Create it from the farm key, e.g.:
+  #   kubectl -n devicefarmer create secret generic devicefarmer-adb-key \
+  #     --from-file=adbkey=images/android-emulator/adbkeys/adbkey
+  adbKeySecret: ""
   resources: {}
 
 # STF provider: bridges adb devices into STF over the dev-side triproxy and serves
@@ -117,6 +123,28 @@ revProxy:
     pullPolicy: IfNotPresent
   # Cluster DNS IP for nginx's resolver (kube-dns/coredns). kind default below.
   dnsResolver: "10.96.0.10"
+  resources: {}
+
+# adb-registrar: an in-cluster agent that registers the farm's emulators with your
+# HOST adb server, so they show up in your local `adb devices` automatically — no
+# port-forward. It relies on the device adb Services being NodePort (the operator
+# sets that) and on your host adb server listening on the kind network. Run the
+# host server in network mode once: `adb kill-server && adb -a -P 5037 nodaemon server`
+# (or `ADB_SERVER_SOCKET=tcp:0.0.0.0:5037 adb start-server`). See docs/runbook.md.
+adbRegistrar:
+  enabled: true
+  # Your host's adb server as reachable from inside the cluster. Default is the kind
+  # Docker-network gateway (= your machine); port is the adb server port.
+  hostADB:
+    host: "172.20.0.1"
+    port: 5037
+  syncIntervalSeconds: 5
+  # Image for the kubectl "watcher" container (needs kubectl + a shell).
+  watcherImage:
+    repository: alpine/k8s
+    tag: "1.31.13"
+    pullPolicy: IfNotPresent
+  # The "driver" container reuses the adb image (.Values.adb.image).
   resources: {}
 
 ingress:

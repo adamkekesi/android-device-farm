@@ -1,0 +1,28 @@
+# A Google Play-capable device class backed by the locally built API-36
+# google_apis_playstore emulator image (emulator 34.1.20; see images/android-emulator/).
+# Apply with:
+#   kubectl apply -f images/android-emulator/deviceclass-emu36-play.yaml
+# then point a DevicePool at it (spec.classes: [{name: emu36-play, minWarm: 1}]).
+apiVersion: farm.example.com/v1alpha1
+kind: DeviceClass
+metadata:
+  name: emu36-play
+spec:
+  apiLevel: 36
+  arch: x86_64
+  providerType: emulator
+  # Local image loaded into kind (`mise run emulator-load`); IfNotPresent means the
+  # node never tries to pull it from a registry.
+  image: android-emulator:android-36-playstore
+  nodeSelector:
+    farm.example.com/kvm: "true"
+  # API 36 + Play Store cold-boots slowly under software GL; allow ~11 min.
+  readinessProbe:
+    exec:
+      command:
+        - sh
+        - -c
+        - adb shell getprop sys.boot_completed 2>/dev/null | grep -q 1
+    initialDelaySeconds: 90
+    periodSeconds: 15
+    failureThreshold: 40

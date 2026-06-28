@@ -1,0 +1,181 @@
+{{- if .Values.adbRegistrar.enabled }}
+{{- $f := include "devicefarmer.fullname" . -}}
+{{- $ns := .Release.Namespace -}}
+# adb-registrar — registers the farm's emulators with your HOST adb server so they
+# appear in your local `adb devices` automatically, with no port-forward.
+#
+# Two containers share an emptyDir:
+#   * watcher (kubectl): writes the set of host-reachable adb endpoints
+#     (<nodeIP>:<nodePort>, since each device's adb Service is NodePort) to
+#     /shared/targets.
+#   * driver (adb): reconciles your host adb server (adb -H <gateway>) against that
+#     set — connect new devices, disconnect gone ones.
+#
+# Prereqs: device adb Services are NodePort (the operator does this), and your host
+# adb server listens on the kind network (run `adb -a`, see docs/runbook.md).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $f }}-adb-registrar
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 4 }}
+data:
+  watch.sh: |
+    #!/bin/sh
+    # Emit <nodeIP>:<nodePort> for every booted (Ready/Leased) device's adb Service.
+    set -u
+    NS="${FARM_NAMESPACE:-devicefarmer}"
+    INTERVAL="${SYNC_INTERVAL:-5}"
+    while true; do
+      node_ip="$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null)"
+      : > /shared/targets.tmp
+      echo "$node_ip" > /shared/nodeip
+      kubectl -n "$NS" get dfd \
+        -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.phase}{"\n"}{end}' 2>/dev/null \
+        | awk '$2=="Ready" || $2=="Leased" {print $1}' \
+        | while read -r dev; do
+            np="$(kubectl -n "$NS" get svc "${dev}-adb" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)"
+            [ -n "$node_ip" ] && [ -n "$np" ] && echo "${node_ip}:${np}" >> /shared/targets.tmp
+          done
+      mv /shared/targets.tmp /shared/targets
+      sleep "$INTERVAL"
+    done
+  drive.sh: |
+    #!/bin/sh
+    # Reconcile the host adb server against /shared/targets.
+    set -u
+    HOST="${HOST_ADB_HOST:-172.20.0.1}"
+    PORT="${HOST_ADB_PORT:-5037}"
+    INTERVAL="${SYNC_INTERVAL:-5}"
+    ADB="adb -H ${HOST} -P ${PORT}"
+    echo "adb-registrar driver -> host adb ${HOST}:${PORT}"
+    while true; do
+      [ -f /shared/targets ] || { sleep "$INTERVAL"; continue; }
+      want="$(cat /shared/targets)"
+      node_ip="$(cat /shared/nodeip 2>/dev/null || true)"
+      have="$($ADB devices 2>/dev/null | awk 'NR>1 && ($2=="device"||$2=="offline"){print $1}')"
+      # connect wanted-but-missing
+      for t in $want; do
+        echo "$have" | grep -qxF "$t" || { echo "+ connect $t"; $ADB connect "$t" >/dev/null 2>&1 || true; }
+      done
+      # disconnect our (node-IP) targets that are no longer wanted; leave anything
+      # else in the user's adb untouched.
+      [ -n "$node_ip" ] && for h in $have; do
+        case "$h" in
+          "${node_ip}:"*) echo "$want" | grep -qxF "$h" || { echo "- disconnect $h"; $ADB disconnect "$h" >/dev/null 2>&1 || true; } ;;
+        esac
+      done
+      sleep "$INTERVAL"
+    done
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $f }}-adb-registrar
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $f }}-adb-registrar
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 4 }}
+rules:
+  - apiGroups: ["farm.example.com"]
+    resources: ["devices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $f }}-adb-registrar
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $f }}-adb-registrar
+subjects:
+  - kind: ServiceAccount
+    name: {{ $f }}-adb-registrar
+    namespace: {{ $ns }}
+---
+# Nodes are cluster-scoped; the watcher needs the node InternalIP for NodePort URLs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $f }}-adb-registrar-nodes
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $f }}-adb-registrar-nodes
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $f }}-adb-registrar-nodes
+subjects:
+  - kind: ServiceAccount
+    name: {{ $f }}-adb-registrar
+    namespace: {{ $ns }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $f }}-adb-registrar
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "adb-registrar") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/scripts: {{ .Files.Get "templates/adb-registrar.yaml" | sha256sum }}
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "adb-registrar") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $f }}-adb-registrar
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: shared
+          emptyDir: {}
+        - name: scripts
+          configMap:
+            name: {{ $f }}-adb-registrar
+      containers:
+        - name: watcher
+          image: "{{ .Values.adbRegistrar.watcherImage.repository }}:{{ .Values.adbRegistrar.watcherImage.tag }}"
+          imagePullPolicy: {{ .Values.adbRegistrar.watcherImage.pullPolicy }}
+          command: ["/bin/sh", "/scripts/watch.sh"]
+          env:
+            - { name: FARM_NAMESPACE, value: {{ $ns | quote }} }
+            - { name: SYNC_INTERVAL, value: {{ .Values.adbRegistrar.syncIntervalSeconds | quote }} }
+          volumeMounts:
+            - { name: shared, mountPath: /shared }
+            - { name: scripts, mountPath: /scripts }
+          {{- with .Values.adbRegistrar.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+        - name: driver
+          image: "{{ .Values.adb.image.repository }}:{{ .Values.adb.image.tag }}"
+          imagePullPolicy: {{ .Values.adb.image.pullPolicy }}
+          command: ["/bin/sh", "/scripts/drive.sh"]
+          env:
+            - { name: HOST_ADB_HOST, value: {{ .Values.adbRegistrar.hostADB.host | quote }} }
+            - { name: HOST_ADB_PORT, value: {{ .Values.adbRegistrar.hostADB.port | quote }} }
+            - { name: SYNC_INTERVAL, value: {{ .Values.adbRegistrar.syncIntervalSeconds | quote }} }
+          volumeMounts:
+            - { name: shared, mountPath: /shared }
+            - { name: scripts, mountPath: /scripts }
+          {{- with .Values.adbRegistrar.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

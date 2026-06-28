@@ -124,7 +124,26 @@ depends = ["docker-build"]
 run = [
   "mkdir -p bin",
   "docker save {{env.IMG}} -o bin/operator-image.tar",
-  "kind load image-archive bin/operator-image.tar --name {{env.KIND_CLUSTER}}",
+  # Pinned kind explicitly — a stale kind on PATH fails to load image archives.
+  '"$(mise which kind)" load image-archive bin/operator-image.tar --name {{env.KIND_CLUSTER}}',
+]
+
+# --- Emulator images --------------------------------------------------------
+
+[tasks.emulator-build]
+description = "Build the Google Play (API 36, emulator 34.1.20) emulator image"
+dir = "images/android-emulator"
+run = "docker build --provenance=false -t android-emulator:android-36-playstore ."
+
+[tasks.emulator-load]
+description = "Build + load the Play emulator image into kind"
+depends = ["emulator-build"]
+# Use the pinned kind explicitly: a stale kind on PATH (~/.local/bin) breaks
+# image-archive loading with 'failed to detect containerd snapshotter'.
+run = [
+  "docker save android-emulator:android-36-playstore -o /tmp/android-emulator-play.tar",
+  '"$(mise which kind)" load image-archive /tmp/android-emulator-play.tar --name {{env.KIND_CLUSTER}}',
+  "rm -f /tmp/android-emulator-play.tar",
 ]
 
 # --- DeviceFarmer control-plane chart --------------------------------------
@@ -141,6 +160,18 @@ run = "helm template devicefarmer ."
 description = "Install the DeviceFarmer control-plane chart"
 dir = "charts/devicefarmer"
 run = "helm upgrade --install devicefarmer . -n devicefarmer --create-namespace"
+
+# --- Host adb integration ---------------------------------------------------
+
+[tasks.host-adb]
+description = "Put the host adb server in network mode so the in-cluster adb-registrar can attach devices (one-time per machine)"
+# Restarts your adb server listening on 0.0.0.0:5037 so pods can drive it. This
+# drops current adb connections briefly; the registrar re-adds farm devices.
+run = "adb kill-server >/dev/null 2>&1 || true; nohup adb -a -P 5037 nodaemon server >/tmp/adb-network.log 2>&1 & disown; sleep 1; echo 'host adb now in network mode on 0.0.0.0:5037 — farm devices will appear in `adb devices` automatically (log: /tmp/adb-network.log)'"
+
+[tasks.adb-sync]
+description = "Alt to the in-cluster registrar: connect farm emulators to host adb from the host (adds a pod-network route)"
+run = "./hack/farm-adb-sync.sh"
 
 # --- Composite --------------------------------------------------------------
 
