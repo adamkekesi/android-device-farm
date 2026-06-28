@@ -96,19 +96,45 @@ provider:
   maxPort: 15100
   resources: {}
 
-# Physical-device provider (Phase 6, future-ready). A DaemonSet on USB-host nodes
-# runs adb and registers attached devices as physical Device CRs that flow through
-# the same lease/health contract. Requires real USB hardware; disabled by default.
+# Physical-device provider. Two modes:
+#
+#   * USB DaemonSet (enabled=false by default) — for real cluster nodes that have
+#     handsets cabled in: a DaemonSet on USB-host nodes runs adb with /dev/bus/usb
+#     passed through and registers attached devices. Needs real USB-host hardware.
+#
+#   * networkDevices (the path for kind/dev and any device reachable over the LAN) —
+#     STF's adb server lives in-cluster and can only reach a phone over TCP, so we
+#     attach devices via wireless adb (`adb tcpip 5555`; see hack/phone-prep.sh). Each
+#     entry below is reconciled by an in-cluster agent Deployment that upserts the
+#     physical Device CR AND keeps `adb connect <adbEndpoint>` alive, so the device
+#     re-attaches automatically after an adb-server/cluster restart (the operator's
+#     one-shot registration Job can't do that). For non-interactive reconnect, also
+#     pin adb.adbKeySecret and authorize that key once on the phone.
 physicalProvider:
   enabled: false
   nodeSelector:
     farm.example.com/usb-host: "true"
-  # DeviceClass (providerType: physical) discovered devices are registered under.
+  # DeviceClass (providerType: physical) USB-discovered devices are registered under.
   deviceClass: physical-pixel
-  # adb endpoint advertised for discovered devices. Remote adb reachability for
-  # physical devices is environment-specific (USB host networking); leave empty to
-  # advertise the raw serial.
+  # adb endpoint advertised for USB-discovered devices. Remote adb reachability is
+  # environment-specific; leave empty to advertise the raw serial.
   adbHostOverride: ""
+  # Wireless-adb devices reconciled by the in-cluster network agent. Example:
+  #   networkDevices:
+  #     - name: pixel7              # short name; Device CR is phys-<name>
+  #       adbEndpoint: 192.168.1.50:5555
+  #       class: physical-pixel     # a DeviceClass with providerType: physical
+  #       poolRef: physical-pool     # a DevicePool whose stfRef.adbHost is set
+  networkDevices: []
+  # How often the network agent re-applies the CR and re-issues `adb connect`.
+  reconnectIntervalSeconds: 15
+  # Screen power management the physical-net agent applies to each networkDevice:
+  #   leased - keep the screen awake ONLY while the device is leased OR actively
+  #            viewed in STF (minicap running); let it sleep when idle (default)
+  #   always - keep the screen awake whenever the device is charging
+  #   none   - don't touch screen power (device defaults / STF decide)
+  # Pair with hack/phone-prep.sh, which sets a sleep-when-idle baseline.
+  screenPower: leased
   resources: {}
 
 # Reverse proxy (STF's nginx model). Fronts all STF routing INCLUDING the dynamic

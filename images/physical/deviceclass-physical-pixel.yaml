@@ -1,0 +1,17 @@
+# A physical-device class. Unlike emulator classes there is no image or KVM/node
+# selector: the hardware lifecycle is owned outside the operator (the device is
+# attached over wireless adb and registered by the physicalProvider network agent —
+# see charts/devicefarmer and hack/phone-prep.sh). The operator just reflects the
+# reported adb endpoint and flows the device through leasing/health like an emulator.
+#
+# apiLevel/arch are informational here (for selection/labelling); adjust to match
+# your handset. Apply with:
+#   kubectl apply -f images/physical/deviceclass-physical-pixel.yaml
+apiVersion: farm.example.com/v1alpha1
+kind: DeviceClass
+metadata:
+  name: physical-pixel
+spec:
+  providerType: physical
+  apiLevel: 34
+  arch: arm64-v8a

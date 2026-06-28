@@ -1,0 +1,13 @@
+# One-shot: re-pin wireless adb on the farm phone when it re-enumerates on USB.
+# Triggered by hack/udev/99-farm-phone.rules. Edit User= and REPO= for your host.
+[Unit]
+Description=Re-run farm phone-prep on USB attach (%i)
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+User=adosz
+Environment=REPO=/home/adosz/projects/android-device-farm
+# adb settles a moment after enumeration before tcpip succeeds.
+ExecStartPre=/bin/sleep 3
+ExecStart=/bin/bash -lc '"$REPO"/hack/phone-prep.sh'

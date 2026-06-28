@@ -170,9 +170,130 @@ kubectl -n devicefarmer delete dfd <name>        # force a full rebuild (pool re
 
 A bound lease shows a `DeviceHealthy` condition while its device self-heals.
 
-## Physical devices (future-ready)
+## Physical devices
 
-Enable the USB-host DaemonSet (`physicalProvider.enabled=true`) on nodes labelled
-`farm.example.com/usb-host=true`. It registers attached devices as
-`providerType: physical` Devices that flow through the same lease/health contract.
-Remote-adb reachability for physical devices is environment-specific.
+A physical handset joins the farm over **wireless adb**: STF's adb server runs
+in-cluster and can only reach a device over TCP, so we pin a stable port with
+`adb tcpip 5555` and register the phone as a `providerType: physical` Device whose
+`adbEndpoint` is `<phone-ip>:5555`. It then flows through the same lease/health
+contract as an emulator.
+
+> Why not Android's "Wireless debugging" toggle? It hands out a random mDNS port that
+> changes constantly — useless as a fixed farm endpoint. `adb tcpip 5555` gives a
+> stable one.
+>
+> (For real cluster nodes with handsets cabled in, the alternative USB-host DaemonSet
+> still exists — `physicalProvider.enabled=true` on nodes labelled
+> `farm.example.com/usb-host=true`. The wireless path below is what fits kind/dev and
+> any LAN-reachable device.)
+
+### 1. Prep the device (USB, one-time)
+
+Plug the phone in, enable Developer Options → USB debugging, then:
+
+```bash
+mise run phone-prep            # or: mise run phone-prep -- <serial> if several attached
+```
+
+This pins `tcpip 5555`, sets a **sleep-when-idle** power baseline, best-effort disables
+the keyguard, and prints the `adbEndpoint` (`<ip>:5555`). Tap **Always allow from this
+computer** on the RSA prompt. Reserve a fixed DHCP lease for that IP so the endpoint
+stays stable.
+
+> Disabling the lock needs no *secure* credential set — if a PIN/pattern is
+> configured, clear it first under Settings → Security → Screen lock → None (the farm
+> cannot enter your credentials for you). `adb tcpip` resets to USB-only on a **phone**
+> reboot; re-run `phone-prep` then, or install the udev auto-re-pin helper
+> (`hack/udev/`).
+
+### 2. Register it into the farm
+
+```bash
+mise run physical-install      # FIRST: apply the physical DeviceClass + physical-pool
+
+helm upgrade devicefarmer charts/devicefarmer -n devicefarmer --reuse-values \
+  --set physicalProvider.networkDevices[0].name=pixel7 \
+  --set physicalProvider.networkDevices[0].adbEndpoint=<ip>:5555 \
+  --set physicalProvider.networkDevices[0].class=physical-pixel \
+  --set physicalProvider.networkDevices[0].poolRef=physical-pool \
+  --set adb.adbKeySecret=devicefarmer-adb-key
+```
+
+Apply the class/pool **before** the agent creates Devices. If you don't, a Device whose
+`classRef` has no DeviceClass goes `Failed` with `DeviceClassNotFound` — but the operator
+watches DeviceClasses and **auto-recovers** such Devices to `Ready` the moment the class
+is applied (no restart/poke needed), so order is forgiving, not fatal.
+
+The in-cluster `physical-net` agent upserts the `phys-<name>` Device CR and keeps
+`adb connect <ip>:5555` alive against the cluster adb server; the provider picks it up
+and it appears in STF. Verify:
+
+```bash
+kubectl -n devicefarmer get dfd            # phys-… reaches Ready
+```
+
+> **Multiple devices:** list them all in a values file rather than reusing
+> `--set physicalProvider.networkDevices[0]...`, which *replaces* the existing entry and
+> silently drops your other phones. See `images/physical/networkdevices.example.yaml`:
+> ```bash
+> helm upgrade devicefarmer charts/devicefarmer -n devicefarmer --reuse-values \
+>   -f images/physical/networkdevices.example.yaml
+> ```
+> The agent reads its device list once at startup, so it's pinned to a `checksum/config`
+> annotation — any change to `physicalProvider` rolls the agent pod automatically, so new
+> devices are picked up without a manual restart.
+
+Open it in the STF UI (`http://localhost:8080/`) → **Use** mirrors the screen and
+input works.
+
+### Staying connected across reboots
+
+- **adb identity must be stable.** Set `adb.adbKeySecret` to a persistent Secret (the
+  same `devicefarmer-adb-key` the Play-emulator section creates, with `~/.android/adbkey`
+  matching). Otherwise the adb server regenerates a key on each restart and the phone
+  re-prompts, breaking unattended reconnect. Authorize that key once on the phone.
+- **The reconnect is continuous**, not one-shot: the `physical-net` agent re-issues
+  `adb connect` every `physicalProvider.reconnectIntervalSeconds`, so the device
+  re-attaches automatically after the adb-server pod or the whole cluster restarts.
+  (The operator's own registration Job is one-shot and can't do this.)
+- **Make the kind node come back on host reboot** (kind doesn't guarantee it):
+  ```bash
+  docker update --restart=unless-stopped ${KIND_CLUSTER:-devicefarm}-control-plane
+  ```
+  Cluster state (Device CR, class, pool) persists on the node volume; the operator,
+  STF, and the agent resume on their own.
+- **Phone reboot** drops `tcpip` — re-run `mise run phone-prep`, or install the udev
+  helper (`hack/udev/`) to do it automatically when the phone re-enumerates on USB.
+
+### Screen power (sleep when idle, awake while in use)
+
+By default the device screen is **not** forced always-on. `phone-prep` sets a
+sleep-when-idle baseline (`stay_on_while_plugged_in 0`, a finite `screen_off_timeout`,
+and `wifi_sleep_policy=2` so Wi-Fi — hence wireless adb and STF presence — survives the
+screen going off). The in-cluster `physical-net` agent then drives screen power per
+`physicalProvider.screenPower`:
+
+- `leased` (default): keep the screen awake **only** while the device is **leased**
+  (`farmctl`, `Device.phase == Leased`) **or** actively viewed in STF (minicap running
+  on the device); otherwise let it sleep. On going in-use the agent wakes it
+  (`KEYCODE_WAKEUP` + dismiss-keyguard); on going idle it sleeps it (`KEYCODE_SLEEP`).
+  Transitions are detected per loop, so there's up to `reconnectIntervalSeconds` of lag
+  at the start of a session — lower the interval if you want it snappier.
+- `always`: keep it awake whenever charging (the old behaviour).
+- `none`: don't touch screen power.
+
+> Note: "in use" via minicap covers people who just click **Use** in the STF UI without
+> taking a `farmctl` lease — so this works even while a device's operator phase is
+> `Failed`. A purely automated `farmctl` lease (no STF viewer) keeps it awake via the
+> phase check. Compatible with the brightness-0 "dark screen" trick: while in use the
+> screen is on (optionally dark, STF still captures full content); while idle it's off.
+
+### Unlock & control while locked
+
+- **Auto-unlock:** the farm cannot defeat a *secure* lock (it can't type your PIN).
+  With the secure lock set to None (done by `phone-prep`), the device never reaches a
+  credential-gated lock screen; while in use the agent wakes it and dismisses the
+  keyguard, so it's effectively always unlocked during a session.
+- **Control while locked:** STF's screen mirror and input work regardless of lock
+  state — you can see and tap the lock screen. With a secure lock you'd type the PIN
+  yourself through STF; with the lock disabled there's nothing to get past.

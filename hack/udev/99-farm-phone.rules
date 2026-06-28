@@ -1,0 +1,4 @@
+# Re-pin wireless adb whenever the farm phone appears on USB.
+# Set idVendor to your handset's USB vendor id (lsusb). Optionally pin one device
+# with ATTR{serial}=="<usb-serial>". See hack/udev/README.md.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="18d1", TAG+="systemd", ENV{SYSTEMD_WANTS}+="farm-phone-prep@%k.service"

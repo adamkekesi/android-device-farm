@@ -112,3 +112,171 @@ spec:
           configMap:
             name: {{ include "devicefarmer.fullname" . }}-physical-provider
 {{- end }}
+{{- if gt (len .Values.physicalProvider.networkDevices) 0 }}
+{{/*
+Network-device agent. STF's adb server is in-cluster and can only reach a phone over
+TCP, so physical devices are attached via wireless adb (adb tcpip; see
+hack/phone-prep.sh). This single Deployment, per configured device, (1) upserts the
+physical Device CR (self-healing if deleted) and (2) keeps `adb connect <endpoint>`
+alive against the in-cluster adb server — which is what survives an adb-server/cluster
+restart, unlike the operator's one-shot registration Job. The operator's
+reconcilePhysical then marks each device Ready and it flows through leasing/health.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-net
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-net") | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-net
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-net") | nindent 4 }}
+rules:
+  - apiGroups: ["farm.example.com"]
+    resources: ["devices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-net
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-net") | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "devicefarmer.fullname" . }}-physical-net
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "devicefarmer.fullname" . }}-physical-net
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-net
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-net") | nindent 4 }}
+data:
+  reconnect.sh: |
+    #!/bin/sh
+    set -u
+    API=https://kubernetes.default.svc
+    SA=/var/run/secrets/kubernetes.io/serviceaccount
+    NS=$(cat "$SA/namespace")
+    TOKEN=$(cat "$SA/token")
+    ADB="adb -H {{ include "devicefarmer.fullname" . }}-adb -P 5037"
+    INTERVAL={{ .Values.physicalProvider.reconnectIntervalSeconds | default 15 }}
+    # always | leased | none — see values.yaml physicalProvider.screenPower.
+    SCREEN_POWER={{ .Values.physicalProvider.screenPower | default "leased" }}
+    # Records "name|endpoint|class|pool" separated by ';' (rendered from values).
+    DEVICES="{{- range .Values.physicalProvider.networkDevices }}{{ .name }}|{{ .adbEndpoint }}|{{ .class | default $.Values.physicalProvider.deviceClass }}|{{ .poolRef }};{{- end }}"
+
+    echo "physical-net agent: every ${INTERVAL}s, screenPower=$SCREEN_POWER"
+
+    crname() { printf 'phys-%s' "$(printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9' '-')"; }
+
+    upsert() {   # cr endpoint class pool
+      body="{\"apiVersion\":\"farm.example.com/v1alpha1\",\"kind\":\"Device\",\"metadata\":{\"name\":\"$1\",\"namespace\":\"$NS\",\"labels\":{\"farm.example.com/class\":\"$3\"}},\"spec\":{\"classRef\":\"$3\",\"providerType\":\"physical\",\"poolRef\":\"$4\",\"serial\":\"$2\",\"adbEndpoint\":\"$2\"}}"
+      # Create if missing (409 AlreadyExists is the steady state and is ignored).
+      wget -q -O- --no-check-certificate \
+        --header "Authorization: Bearer $TOKEN" \
+        --header "Content-Type: application/json" \
+        --post-data "$body" \
+        "$API/apis/farm.example.com/v1alpha1/namespaces/$NS/devices" >/dev/null 2>&1 \
+        || true
+    }
+
+    # status.phase of a Device CR (via the k8s API; works even when adb is down).
+    device_phase() {   # cr
+      wget -q -O- --no-check-certificate --header "Authorization: Bearer $TOKEN" \
+        "$API/apis/farm.example.com/v1alpha1/namespaces/$NS/devices/$1" 2>/dev/null \
+        | grep -o '"phase":"[A-Za-z]*"' | head -n1
+    }
+
+    # Keep the screen awake only while the device is "in use" — leased (farmctl) OR
+    # actively viewed in STF (minicap running on the device) — and let it sleep when
+    # idle. Key events are sent only on transitions (tracked in /tmp) so we don't spam
+    # wake/sleep; the stay_on setting is reasserted every loop (idempotent).
+    manage_screen() {   # cr endpoint
+      [ "$SCREEN_POWER" = none ] && return 0
+      if [ "$SCREEN_POWER" = always ]; then
+        $ADB -s "$2" shell 'settings put system stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
+        return 0
+      fi
+      inuse=0
+      device_phase "$1" | grep -q Leased && inuse=1
+      if [ "$inuse" -eq 0 ]; then
+        mc="$($ADB -s "$2" shell 'pgrep -f minicap 2>/dev/null; pidof minicap 2>/dev/null' 2>/dev/null)"
+        [ -n "$mc" ] && inuse=1
+      fi
+      sf="/tmp/screen-$1"; prev="$(cat "$sf" 2>/dev/null || echo "")"
+      if [ "$inuse" -eq 1 ]; then
+        $ADB -s "$2" shell 'settings put system stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
+        if [ "$prev" != awake ]; then
+          $ADB -s "$2" shell 'input keyevent KEYCODE_WAKEUP; wm dismiss-keyguard' >/dev/null 2>&1 || true
+          echo "wake  $1 (in use)"
+        fi
+        echo awake > "$sf"
+      else
+        $ADB -s "$2" shell 'settings put system stay_on_while_plugged_in 0' >/dev/null 2>&1 || true
+        if [ "$prev" != idle ]; then
+          $ADB -s "$2" shell 'input keyevent KEYCODE_SLEEP' >/dev/null 2>&1 || true
+          echo "sleep $1 (idle)"
+        fi
+        echo idle > "$sf"
+      fi
+    }
+
+    while true; do
+      echo "$DEVICES" | tr ';' '\n' | while IFS='|' read -r name ep class pool; do
+        [ -z "$name" ] && continue
+        cr="$(crname "$name")"
+        upsert "$cr" "$ep" "$class" "$pool"
+        if $ADB connect "$ep" >/dev/null 2>&1; then
+          manage_screen "$cr" "$ep"
+        else
+          echo "retry $name $ep (adb server / device unreachable)"
+        fi
+      done
+      sleep "$INTERVAL"
+    done
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devicefarmer.fullname" . }}-physical-net
+  labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-net") | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {{- include "devicefarmer.selectorLabels" (dict "root" . "component" "physical-net") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # The device list / interval / screenPower are baked into the ConfigMap script
+        # and read once at startup. Hash them onto the pod so any change rolls the
+        # Deployment — otherwise a `helm upgrade` that only edits networkDevices updates
+        # the ConfigMap but leaves the old agent running the old device list.
+        checksum/config: {{ .Values.physicalProvider | toJson | sha256sum }}
+      labels: {{- include "devicefarmer.labels" (dict "root" . "component" "physical-net") | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "devicefarmer.fullname" . }}-physical-net
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: "{{ .Values.adb.image.repository }}:{{ .Values.adb.image.tag }}"
+          imagePullPolicy: {{ .Values.adb.image.pullPolicy }}
+          command: ["sh", "/agent/reconnect.sh"]
+          volumeMounts:
+            - { name: agent, mountPath: /agent }
+          {{- with .Values.physicalProvider.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: agent
+          configMap:
+            name: {{ include "devicefarmer.fullname" . }}-physical-net
+{{- end }}

@@ -276,6 +276,41 @@ var _ = Describe("Device controller", func() {
 		Expect(k8sClient.Get(ctx, client.ObjectKey{Name: pname, Namespace: namespace}, &d)).To(Succeed())
 		Expect(d.Status.ADBEndpoint).To(Equal("usb-host-1:5555"))
 	})
+
+	It("recovers a Failed device when its DeviceClass is created later (DeviceClass watch)", func() {
+		lateClass := "late-class-" + string(uuidish())
+		dname := "late-dev-" + string(uuidish())
+
+		Expect(k8sClient.Create(ctx, &farmv1alpha1.Device{
+			ObjectMeta: metav1.ObjectMeta{Name: dname, Namespace: namespace},
+			Spec: farmv1alpha1.DeviceSpec{
+				ClassRef: lateClass, ProviderType: farmv1alpha1.ProviderPhysical, ADBEndpoint: "phone:5555",
+			},
+		})).To(Succeed())
+		defer func() {
+			_ = k8sClient.Delete(ctx, &farmv1alpha1.Device{ObjectMeta: metav1.ObjectMeta{Name: dname, Namespace: namespace}})
+		}()
+
+		phase := func() farmv1alpha1.DevicePhase {
+			var d farmv1alpha1.Device
+			_ = k8sClient.Get(ctx, client.ObjectKey{Name: dname, Namespace: namespace}, &d)
+			return d.Status.Phase
+		}
+
+		By("failing while the class is missing")
+		Eventually(phase, timeout, interval).Should(Equal(farmv1alpha1.DeviceFailed))
+
+		By("recovering once the class is created — without touching the Device")
+		Expect(k8sClient.Create(ctx, &farmv1alpha1.DeviceClass{
+			ObjectMeta: metav1.ObjectMeta{Name: lateClass},
+			Spec:       farmv1alpha1.DeviceClassSpec{ProviderType: farmv1alpha1.ProviderPhysical},
+		})).To(Succeed())
+		defer func() {
+			_ = k8sClient.Delete(ctx, &farmv1alpha1.DeviceClass{ObjectMeta: metav1.ObjectMeta{Name: lateClass}})
+		}()
+
+		Eventually(phase, timeout, interval).Should(Equal(farmv1alpha1.DeviceReady))
+	})
 })
 
 // uuidish returns a short unique-ish suffix so parallel specs don't collide.

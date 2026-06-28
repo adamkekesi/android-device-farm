@@ -31,7 +31,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	farmv1alpha1 "github.com/adamkekesi/android-device-farm/operator/api/v1alpha1"
 )
@@ -521,6 +523,27 @@ func (r *DeviceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Pod{}).
 		Owns(&corev1.Service{}).
 		Owns(&batchv1.Job{}).
+		// Re-reconcile Devices when their DeviceClass appears/changes. Without this a
+		// Device created before its class exists is marked Failed (DeviceClassNotFound)
+		// and, since setPhase doesn't requeue, stays Failed forever — even once the
+		// class is applied. This recovers it automatically.
+		Watches(&farmv1alpha1.DeviceClass{}, handler.EnqueueRequestsFromMapFunc(r.devicesForClass)).
 		Named("device").
 		Complete(r)
+}
+
+// devicesForClass enqueues every Device that references the given DeviceClass.
+func (r *DeviceReconciler) devicesForClass(ctx context.Context, obj client.Object) []reconcile.Request {
+	var devices farmv1alpha1.DeviceList
+	if err := r.List(ctx, &devices); err != nil {
+		logf.FromContext(ctx).Error(err, "listing devices for DeviceClass watch", "class", obj.GetName())
+		return nil
+	}
+	var reqs []reconcile.Request
+	for i := range devices.Items {
+		if devices.Items[i].Spec.ClassRef == obj.GetName() {
+			reqs = append(reqs, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&devices.Items[i])})
+		}
+	}
+	return reqs
 }

@@ -173,6 +173,20 @@ run = "adb kill-server >/dev/null 2>&1 || true; nohup adb -a -P 5037 nodaemon se
 description = "Alt to the in-cluster registrar: connect farm emulators to host adb from the host (adds a pod-network route)"
 run = "./hack/farm-adb-sync.sh"
 
+# --- Physical devices -------------------------------------------------------
+
+[tasks.phone-prep]
+description = "One-time (and post phone-reboot) USB prep of a physical device: pin wireless adb (tcpip 5555), stay-awake, disable keyguard. Prints the adbEndpoint."
+# Pass a serial when several devices are attached: `mise run phone-prep -- <serial>`.
+run = "./hack/phone-prep.sh"
+
+[tasks.physical-install]
+description = "Apply the physical DeviceClass + DevicePool. Then helm upgrade with physicalProvider.networkDevices set (see docs/runbook.md)."
+run = [
+  "kubectl apply -f images/physical/deviceclass-physical-pixel.yaml",
+  "kubectl apply -f images/physical/devicepool-physical.yaml",
+]
+
 # --- Composite --------------------------------------------------------------
 
 [tasks.dev]

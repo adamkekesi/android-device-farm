@@ -1,0 +1,28 @@
+# A dedicated pool for physical devices.
+#
+# Its only jobs here are to (a) carry stfRef.adbHost so the operator registers the
+# device into STF — ensureRegistration only fires for Devices whose poolRef points at
+# a pool with stfRef.adbHost set — and (b) give physical devices their own capacity
+# bucket, isolated from emulator classes so an idle phone is never LRU-evicted to free
+# room for an emulator.
+#
+# minWarm: 0 means the warm-pool reconciler never tries to *provision* hardware (it
+# only ever adds Devices, never prunes), so the physicalProvider network agent stays
+# the sole creator of the physical Device CRs.
+#
+# Apply with:
+#   kubectl apply -f images/physical/devicepool-physical.yaml
+apiVersion: farm.example.com/v1alpha1
+kind: DevicePool
+metadata:
+  name: physical-pool
+  namespace: devicefarmer
+spec:
+  classes:
+    - name: physical-pixel
+      minWarm: 0
+  # Raise if you attach more than this many physical devices.
+  maxConcurrent: 4
+  stfRef:
+    url: http://devicefarmer-app.devicefarmer.svc.cluster.local:3000
+    adbHost: devicefarmer-adb.devicefarmer.svc.cluster.local

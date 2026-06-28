@@ -1,0 +1,28 @@
+# Example values for attaching one or more physical devices over wireless adb.
+#
+# Prefer a values file over `--set physicalProvider.networkDevices[0]...`: with --set,
+# adding a device by reusing index [0] REPLACES the existing entry instead of appending,
+# which silently drops your other devices. List them all here instead.
+#
+# Copy this, set each device's adbEndpoint (from `mise run phone-prep`), then:
+#   helm upgrade devicefarmer charts/devicefarmer -n devicefarmer --reuse-values \
+#     -f images/physical/networkdevices.example.yaml
+# The agent pod auto-rolls on any change here (checksum annotation), so new devices are
+# picked up without a manual restart.
+physicalProvider:
+  # leased (default) | always | none — see values.yaml.
+  screenPower: leased
+  reconnectIntervalSeconds: 15
+  networkDevices:
+    - name: phone-a                 # Device CR becomes phys-<name>
+      adbEndpoint: 192.168.0.99:5555
+      class: physical-pixel          # a DeviceClass with providerType: physical
+      poolRef: physical-pool         # a DevicePool whose stfRef.adbHost is set
+    - name: phone-b
+      adbEndpoint: 192.168.0.23:5555
+      class: physical-pixel
+      poolRef: physical-pool
+
+# Pin a stable adb identity so devices don't re-prompt after an adb-server restart.
+adb:
+  adbKeySecret: devicefarmer-adb-key
